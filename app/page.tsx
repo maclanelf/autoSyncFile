@@ -1,0 +1,188 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import { Button, Card, CardBody, Chip, Divider, Input, Progress, Select, SelectItem, Spinner, Tooltip } from "@heroui/react";
+import { Bell, ChevronDown, Copy, Database, Folder, HardDrive, Network, Pencil, Plus, RefreshCw, Search, ShieldCheck, Trash2, X } from "lucide-react";
+import type { Remote, SyncJob, TransferFile } from "@/lib/types";
+
+const sourceTypes = [
+  { key: "webdav", label: "WebDAV" }, { key: "smb", label: "SMB / Windows 共享" },
+  { key: "ftp", label: "FTP" }, { key: "sftp", label: "SFTP / SSH" }, { key: "local", label: "本地文件系统" },
+] as const;
+const sourceDefaults: Record<string, Record<string, string>> = {
+  webdav: { url: "", vendor: "other", user: "", pass: "" },
+  smb: { host: "", user: "", pass: "", domain: "" },
+  ftp: { host: "", user: "", pass: "", port: "21", explicit_tls: "false" },
+  sftp: { host: "", user: "", pass: "", port: "22", key_file: "" },
+  local: {},
+};
+const emptyRemote = { name: "", type: "webdav", config: sourceDefaults.webdav };
+const statusColor = { running: "warning", completed: "success", failed: "danger", cancelled: "default", unknown: "default" } as const;
+type RemoteEntry = { Name: string; Path?: string; IsDir?: boolean; Size?: number };
+type SyncLocation = { remoteName: string; path: string; entries: RemoteEntry[]; loading: boolean };
+type DetailTab = "transferring" | "finished" | "information";
+const emptyLocation: SyncLocation = { remoteName: "", path: "", entries: [], loading: false };
+
+export default function Home() {
+  const [remotes, setRemotes] = useState<Remote[]>([]);
+  const [jobs, setJobs] = useState<SyncJob[]>([]);
+  const [form, setForm] = useState<any>(emptyRemote);
+  const [transfer, setTransfer] = useState({ name: "", operation: "sync", source: "", destination: "" });
+  const [selectedJobId, setSelectedJobId] = useState<number | null>(null);
+  const [jobSearch, setJobSearch] = useState("");
+  const [isJobPickerOpen, setJobPickerOpen] = useState(false);
+  const [detailTab, setDetailTab] = useState<DetailTab>("transferring");
+  const [detailFiles, setDetailFiles] = useState<TransferFile[]>([]);
+  const [detailTotal, setDetailTotal] = useState(0);
+  const [detailCounts, setDetailCounts] = useState({transferring: 0, finished: 0});
+  const [detailPage, setDetailPage] = useState(1);
+  const [syncSource, setSyncSource] = useState<SyncLocation>(emptyLocation);
+  const [syncDestination, setSyncDestination] = useState<SyncLocation>(emptyLocation);
+  const [message, setMessage] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [view, setView] = useState<"tasks" | "storage">("tasks");
+  const [selectedRemote, setSelectedRemote] = useState<Remote | null>(null);
+  const [remotePath, setRemotePath] = useState("");
+  const [entries, setEntries] = useState<RemoteEntry[]>([]);
+  const [browseLoading, setBrowseLoading] = useState(false);
+  const [isSourceDialogOpen, setSourceDialogOpen] = useState(false);
+  const [isTransferDialogOpen, setTransferDialogOpen] = useState(false);
+  const [editingRemote, setEditingRemote] = useState<Remote | null>(null);
+  const activeJobs = jobs.filter((job) => job.status === "running");
+
+  async function load() {
+    try {
+      const [remoteResponse, jobsResponse] = await Promise.all([fetch("/api/remotes"), fetch("/api/jobs")]);
+      const remoteData = await remoteResponse.json();
+      const jobData = await jobsResponse.json();
+      const updated = await Promise.all(jobData.map(async (job: SyncJob) => (job.status === "running" || job.id === selectedJobId) ? (await fetch(`/api/jobs/${job.id}`)).json().catch(() => job) : job));
+      setRemotes(remoteData);
+      setJobs(updated);
+      setSelectedJobId((current) => current && updated.some((job: SyncJob) => job.id === current) ? current : (updated.find((job: SyncJob) => job.status === "running") || updated[0])?.id || null);
+      setSelectedRemote((current) => {
+        if (!current) return remoteData[0] || null;
+        return remoteData.some((remote: Remote) => remote.name === current.name) ? current : remoteData[0] || null;
+      });
+    } catch { setMessage("无法读取控制台数据，请检查 rclone RC 服务连接。"); }
+    finally { setLoading(false); }
+  }
+
+  useEffect(() => { load(); const timer = setInterval(load, 5000); return () => clearInterval(timer); }, []);
+  useEffect(() => { if (selectedJobId !== null) loadJobDetails(selectedJobId, "transferring", 1, true); }, [selectedJobId]);
+  useEffect(() => { if (view === "storage" && selectedRemote) browse(selectedRemote, remotePath); }, [view, selectedRemote, remotePath]);
+
+  async function browse(remote: Remote, path = "") {
+    setBrowseLoading(true);
+    try {
+      const response = await fetch("/api/browse", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ path: `${remote.name}:${path}` }) });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error);
+      setEntries(data.list || []);
+    } catch (error) { setEntries([]); setMessage(error instanceof Error ? `无法读取 ${remote.name}: ${error.message}` : "无法读取远端目录"); }
+    finally { setBrowseLoading(false); }
+  }
+
+  async function addRemote(event: React.FormEvent) {
+    event.preventDefault();
+    const response = await fetch("/api/remotes", { method: editingRemote ? "PATCH" : "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(editingRemote ? { ...form, id: editingRemote.id } : form) });
+    const data = await response.json();
+    setMessage(response.ok ? (editingRemote ? "数据源配置已更新" : "数据源已注册到 rclone") : data.error);
+    if (response.ok) { setForm({ name: "", type: "webdav", config: sourceDefaults.webdav }); setEditingRemote(null); setSourceDialogOpen(false); setView("storage"); load(); }
+  }
+  function openAddSource() { setEditingRemote(null); setForm({ name: "", type: "webdav", config: sourceDefaults.webdav }); setSourceDialogOpen(true); }
+  function openEditSource(remote: Remote) {
+    const config = {...remote.config, pass: ""};
+    setEditingRemote(remote);
+    setForm({ name: remote.name, type: remote.type, config: sourceDefaults[remote.type] ? {...sourceDefaults[remote.type], ...config} : config });
+    setSourceDialogOpen(true);
+  }
+  async function deleteSource(remote: Remote) {
+    if (!window.confirm(`确定从 rclone 删除数据源“${remote.name}”吗？该操作会移除远端配置。`)) return;
+    const response = await fetch("/api/remotes", {method: "DELETE", headers: {"content-type": "application/json"}, body: JSON.stringify({name: remote.name})});
+    const data = await response.json();
+    setMessage(response.ok ? "数据源已从 rclone 删除" : data.error);
+    if (response.ok) { setSelectedRemote(null); setEntries([]); load(); }
+  }
+  function buildRemotePath(remoteName: string, path: string) { return `${remoteName}:${path ? `/${path}` : ""}`; }
+  async function loadSyncDirectory(kind: "source" | "destination", remoteName: string, path = "") {
+    const update = kind === "source" ? setSyncSource : setSyncDestination;
+    update({remoteName, path, entries: [], loading: true});
+    try {
+      const response = await fetch("/api/browse", {method: "POST", headers: {"content-type": "application/json"}, body: JSON.stringify({path: buildRemotePath(remoteName, path)})});
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error);
+      update({remoteName, path, entries: data.list || [], loading: false});
+    } catch (error) {
+      update({remoteName, path, entries: [], loading: false});
+      setMessage(error instanceof Error ? error.message : "无法读取目录");
+    }
+  }
+  function openTransfer() { setTransfer({name: "", operation: "sync", source: "", destination: ""}); setSyncSource(emptyLocation); setSyncDestination(emptyLocation); setTransferDialogOpen(true); }
+  function closeTransfer() { setTransferDialogOpen(false); }
+  async function start(event: React.FormEvent) { event.preventDefault(); const response = await fetch("/api/jobs", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(transfer) }); const data = await response.json(); setMessage(response.ok ? "同步任务已启动" : data.error); if (response.ok) closeTransfer(); load(); }
+  async function stop(id: number) { await fetch(`/api/jobs/${id}`, { method: "DELETE" }); setMessage("任务已取消"); load(); }
+  async function selectJob(id: number) {
+    setSelectedJobId(id);
+    setJobPickerOpen(false);
+    setDetailPage(1);
+    setDetailFiles([]);
+    await loadJobDetails(id, "transferring", 1, true);
+  }
+  async function loadJobDetails(id: number, tab: DetailTab, page: number, preferFinished = false) {
+    if (tab === "information") { setDetailTab(tab); return; }
+    try {
+      const response = await fetch(`/api/jobs/${id}?state=${tab}&page=${page}`);
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error);
+      setJobs((current) => current.map((job) => job.id === id ? data : job));
+      if (preferFinished && data.total === 0) { await loadJobDetails(id, "finished", 1); return; }
+      setDetailTab(tab);
+      setDetailPage(data.page);
+      setDetailTotal(data.total);
+      setDetailCounts(data.counts || {transferring: 0, finished: 0});
+      setDetailFiles(data.files || []);
+    } catch (error) { setMessage(error instanceof Error ? error.message : "无法读取任务详情"); }
+  }
+  function openStorage() { setView("storage"); }
+  function selectRemote(remote: Remote) { setRemotePath(""); setSelectedRemote(remote); }
+  function openDirectory(path: string) { setRemotePath(path); }
+
+  return <main className="webui-shell">
+    <header className="webui-topbar"><div className="webui-logo"><span><ShieldCheck size={19}/></span><strong>Rclone WebUI</strong></div><nav className="webui-primary-nav" aria-label="主导航"><button type="button" className={view === "storage" ? "selected" : ""} onClick={openStorage}><HardDrive size={17}/>添加存储</button><button type="button" className={view === "tasks" ? "selected" : ""} onClick={() => setView("tasks")}><Folder size={17}/>任务</button></nav><div className="webui-profile"><Tooltip content="刷新数据"><ActionButton iconOnly aria-label="刷新" onClick={load}><RefreshCw size={18}/></ActionButton></Tooltip><Tooltip content="通知"><ActionButton iconOnly aria-label="通知"><Bell size={18}/></ActionButton></Tooltip><ActionButton className="search-button" icon={<Search size={18}/>}>搜索</ActionButton><ActionButton iconOnly aria-label="账户菜单"><ChevronDown size={17}/></ActionButton></div></header>
+    <section className="webui-main"><Card className="file-panel"><CardBody><div className="panel-layout"><section className="file-content">{view === "tasks" ? <FileManagementView loading={loading} jobs={jobs} activeJobs={activeJobs} selectedJobId={selectedJobId} search={jobSearch} pickerOpen={isJobPickerOpen} detailTab={detailTab} detailFiles={detailFiles} detailPage={detailPage} detailTotal={detailTotal} detailCounts={detailCounts} onSearch={setJobSearch} onPickerOpen={setJobPickerOpen} onSelect={selectJob} onTab={(tab) => selectedJobId && loadJobDetails(selectedJobId, tab, 1)} onPage={(page) => selectedJobId && loadJobDetails(selectedJobId, detailTab, page)} onTransfer={openTransfer} onStop={stop} onRefresh={load}/> : <StorageView remotes={remotes} selectedRemote={selectedRemote} entries={entries} path={remotePath} loading={browseLoading} onAdd={openAddSource} onEdit={openEditSource} onDelete={deleteSource} onSelect={selectRemote} onOpenDirectory={openDirectory} onRefresh={() => selectedRemote && browse(selectedRemote, remotePath)}/>}</section></div></CardBody></Card></section>
+    {isSourceDialogOpen && <div className="source-dialog-backdrop" role="presentation" onMouseDown={() => setSourceDialogOpen(false)}><form className="source-dialog" onSubmit={addRemote} onMouseDown={(event) => event.stopPropagation()}><div className="source-dialog-header"><h2>{editingRemote ? "编辑数据源" : "添加数据源"}</h2><ActionButton iconOnly aria-label="关闭" onClick={() => setSourceDialogOpen(false)}><X size={18}/></ActionButton></div><div className="source-dialog-body"><label className="source-field"><span>数据源类型</span><select value={form.type} disabled={Boolean(editingRemote)} onChange={(event) => { const type = event.target.value; setForm({ name: form.name, type, config: sourceDefaults[type] || {} }); }}>{sourceTypes.map((type) => <option key={type.key} value={type.key}>{type.label}</option>)}</select></label><label className="source-field"><span>数据源名称</span><input placeholder="例如：家庭 NAS" value={form.name} readOnly={Boolean(editingRemote)} onChange={(event) => setForm({ ...form, name: event.target.value })} required/><small>{editingRemote ? "rclone 数据源名称不可直接修改" : "将作为 rclone remote 名称"}</small></label><SourceConfigFields type={form.type} config={form.config} onChange={(key, value) => setForm({ ...form, config: { ...form.config, [key]: value } })}/></div><div className="source-dialog-footer"><ActionButton className="dialog-cancel" onClick={() => setSourceDialogOpen(false)}>取消</ActionButton><ActionButton className="primary-action" type="submit">{editingRemote ? "保存配置" : "写入 rclone 配置"}</ActionButton></div></form></div>}
+    {isTransferDialogOpen && <div className="source-dialog-backdrop" role="presentation" onMouseDown={closeTransfer}><form className="source-dialog sync-dialog" onSubmit={start} onMouseDown={(event) => event.stopPropagation()}><div className="source-dialog-header"><h2>新建同步</h2><ActionButton iconOnly aria-label="关闭" onClick={closeTransfer}><X size={18}/></ActionButton></div><div className="source-dialog-body"><label className="source-field"><span>任务名称</span><input value={transfer.name} placeholder="例如：NAS 照片备份" onChange={(event) => setTransfer({...transfer, name: event.target.value})} required/></label><label className="source-field"><span>同步方式</span><select value={transfer.operation} onChange={(event) => setTransfer({...transfer, operation: event.target.value})}><option value="sync">SYNC · 镜像同步</option><option value="copy">COPY · 增量复制</option></select></label><div className="sync-location-grid"><SyncLocationPicker label="源" location={syncSource} remotes={remotes} onRemoteChange={(name) => { setTransfer({...transfer, source: buildRemotePath(name, "")}); loadSyncDirectory("source", name); }} onDirectoryChange={(path) => { setTransfer({...transfer, source: buildRemotePath(syncSource.remoteName, path)}); loadSyncDirectory("source", syncSource.remoteName, path); }}/><SyncLocationPicker label="目的地" location={syncDestination} remotes={remotes} onRemoteChange={(name) => { setTransfer({...transfer, destination: buildRemotePath(name, "")}); loadSyncDirectory("destination", name); }} onDirectoryChange={(path) => { setTransfer({...transfer, destination: buildRemotePath(syncDestination.remoteName, path)}); loadSyncDirectory("destination", syncDestination.remoteName, path); }}/></div></div><div className="source-dialog-footer"><ActionButton className="dialog-cancel" onClick={closeTransfer}>取消</ActionButton><ActionButton className="primary-action" type="submit" disabled={!transfer.name.trim() || !transfer.source || !transfer.destination}>启动同步</ActionButton></div></form></div>}
+    {message && <div className="toast"><span>{message}</span><Button isIconOnly size="sm" variant="light" aria-label="关闭消息" onPress={() => setMessage("")}><X size={16}/></Button></div>}
+  </main>;
+}
+
+function TasksView({ loading, jobs, activeJobs, remotes, onAdd, onTransfer, onRefresh, onStop }: any) { return <><div className="content-heading"><div><p className="crumb">文件空间 / 全部文件</p><h1>文件管理</h1></div><ActionButton className="primary-action" icon={<Plus size={18}/>} onClick={onTransfer}>新建同步</ActionButton></div><div className="storage-cards"><SummaryCard label="已连接" value={`${remotes.length} 个远端`} caption="远端存储" action={onAdd}/><SummaryCard label="传输总量" value={`${jobs.length} 个任务`} caption="历史记录"/><SummaryCard label="运行中" value={`${activeJobs.length} 个任务`} caption="实时同步"/><SummaryCard label="RC 服务" value="在线" caption="服务状态"/></div><div className="file-toolbar"><div><ActionButton className="active-toolbar">任务列表</ActionButton></div><ActionButton icon={<RefreshCw size={15}/>} onClick={onRefresh}>刷新</ActionButton></div><div className="task-table"><div className="table-head"><span>任务名称</span><span>远端</span><span>类型</span><span>状态</span><span>创建时间</span><span>操作</span></div>{loading ? <div className="table-loading"><Spinner color="primary"/><span>正在读取任务</span></div> : jobs.length === 0 ? <div className="table-empty"><Folder size={30}/><strong>尚无同步任务</strong><span>创建第一个同步任务开始管理文件。</span></div> : jobs.map((job: SyncJob) => <div className="table-row" key={job.id}><div className="task-name"><span className="file-badge"><Copy size={17}/></span><div><strong>{job.operation === "sync" ? "镜像同步任务" : "增量复制任务"}</strong><small>{job.source} → {job.destination}</small></div></div><span>{job.remoteName || "本地"}</span><span className="mono">{job.operation.toUpperCase()}</span><Chip size="sm" color={statusColor[job.status]} variant="flat">{job.status}</Chip><span className="mono">{new Date(job.createdAt).toLocaleString()}</span><div className="task-actions">{job.status === "running" && <ActionButton className="danger-action" iconOnly aria-label="取消任务" onClick={() => onStop(job.id)}><X size={16}/></ActionButton>}</div>{job.status === "running" && <Progress className="row-progress" size="sm" isIndeterminate color="warning" aria-label="同步中"/>}</div>)}</div></>; }
+
+function StorageView({ remotes, selectedRemote, entries, path, loading, onAdd, onEdit, onDelete, onSelect, onOpenDirectory, onRefresh }: { remotes: Remote[]; selectedRemote: Remote | null; entries: RemoteEntry[]; path: string; loading: boolean; onAdd: () => void; onEdit: (remote: Remote) => void; onDelete: (remote: Remote) => void; onSelect: (remote: Remote) => void; onOpenDirectory: (path: string) => void; onRefresh: () => void }) { const segments = path.split("/").filter(Boolean); return <><div className="content-heading"><div><p className="crumb">存储空间 / rclone 数据源</p><h1>添加存储</h1></div><ActionButton className="primary-action" icon={<Plus size={18}/>} onClick={onAdd}>添加数据源</ActionButton></div><div className="storage-layout"><div className="remote-list"><div className="remote-list-heading"><span>已挂载数据源</span><Chip size="sm" variant="flat">{remotes.length}</Chip></div>{remotes.length === 0 ? <div className="remote-empty">尚未发现 rclone 数据源</div> : remotes.map((remote) => <div key={remote.id} className={`remote-item ${selectedRemote?.id === remote.id ? "active" : ""}`}><button type="button" className="remote-select" onClick={() => onSelect(remote)}><HardDrive size={18}/><span><strong>{remote.name}</strong><small>{remote.type}</small></span></button><ActionButton className="remote-edit" iconOnly aria-label={`编辑 ${remote.name}`} title="编辑数据源" onClick={() => onEdit(remote)} icon={<Pencil size={15}/>}/><ActionButton className="remote-delete" iconOnly aria-label={`删除 ${remote.name}`} title="删除数据源" onClick={() => onDelete(remote)} icon={<Trash2 size={15}/>}/></div>)}</div><div className="remote-browser"><div className="browser-heading"><div><span className="file-badge"><Network size={17}/></span><div><strong>{selectedRemote ? `${selectedRemote.name}:` : "选择数据源"}</strong><small>{selectedRemote ? `${selectedRemote.type.toUpperCase()} · rclone 已挂载` : "从左侧选择一个数据源"}</small></div></div><div className="browser-actions">{selectedRemote && <><ActionButton iconOnly aria-label="编辑数据源" title="编辑数据源" onClick={() => onEdit(selectedRemote)} icon={<Pencil size={17}/>}/><ActionButton className="danger-action" iconOnly aria-label="删除数据源" title="删除数据源" onClick={() => onDelete(selectedRemote)} icon={<Trash2 size={17}/>}/></>}<ActionButton iconOnly aria-label="刷新目录" title="刷新目录" onClick={onRefresh} icon={<RefreshCw size={17}/>}/></div></div><div className="path-bar">{selectedRemote && <button type="button" onClick={() => onOpenDirectory("")}>{selectedRemote.name}:</button>}{segments.map((segment, index) => <span key={`${segment}-${index}`}><b>/</b><button type="button" onClick={() => onOpenDirectory(segments.slice(0, index + 1).join("/"))}>{segment}</button></span>)}</div><Divider/>{loading ? <div className="table-loading"><Spinner color="primary"/><span>正在读取远端目录</span></div> : !selectedRemote ? <div className="table-empty"><HardDrive size={30}/><strong>没有可浏览的数据源</strong></div> : entries.length === 0 ? <div className="table-empty"><Folder size={30}/><strong>远端目录为空</strong><span>该路径中没有可显示的文件。</span></div> : <div className="entry-list">{entries.map((entry) => <button type="button" className={`entry-row ${entry.IsDir ? "directory-row" : ""}`} key={entry.Path || entry.Name} onClick={() => entry.IsDir && onOpenDirectory(entry.Path || [...segments, entry.Name].join("/"))}><span className="file-badge">{entry.IsDir ? <Folder size={17}/> : <Copy size={17}/>}</span><strong>{entry.Name}</strong><span>{entry.IsDir ? "打开文件夹" : formatSize(entry.Size)}</span></button>)}</div>}</div></div></>; }
+
+function SummaryCard({ label, value, caption, action }: { label: string; value: string; caption: string; action?: () => void }) { return <button type="button" className="summary-card" onClick={action} aria-label={action ? `添加${label}` : label}><span className="summary-heading"><span className="summary-label">{label}</span>{action && <span className="summary-add"><Plus size={16}/></span>}</span><span className="summary-caption">{caption}</span><strong>{value}</strong></button>; }
+function FileManagementView({loading, jobs, activeJobs, selectedJobId, search, pickerOpen, detailTab, detailFiles, detailPage, detailTotal, detailCounts, onSearch, onPickerOpen, onSelect, onTab, onPage, onTransfer, onStop, onRefresh}: {loading: boolean; jobs: SyncJob[]; activeJobs: SyncJob[]; selectedJobId: number | null; search: string; pickerOpen: boolean; detailTab: DetailTab; detailFiles: TransferFile[]; detailPage: number; detailTotal: number; detailCounts: {transferring: number; finished: number}; onSearch: (value: string) => void; onPickerOpen: (open: boolean) => void; onSelect: (id: number) => void; onTab: (tab: DetailTab) => void; onPage: (page: number) => void; onTransfer: () => void; onStop: (id: number) => void; onRefresh: () => void}) {
+  const filtered = jobs.filter((job) => `${job.name} ${job.source} ${job.destination}`.toLowerCase().includes(search.toLowerCase()));
+  const selected = jobs.find((job) => job.id === selectedJobId);
+  const pageCount = Math.max(1, Math.ceil(detailTotal / 10));
+  return <><div className="task-management-toolbar"><div className="task-heading">{selected ? <><p>当前任务</p><h1>{selected.name}</h1><span>{selected.source} → {selected.destination}</span></> : <><p>同步任务</p><h1>任务</h1><span>选择或搜索一个任务查看详情</span></>}</div><div className="task-toolbar-actions"><div className="job-search-control" onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setTimeout(() => onPickerOpen(false), 0); }}><div><Search size={16}/><input aria-label="搜索同步任务" placeholder="搜索任务名称或路径" value={search} onFocus={() => onPickerOpen(true)} onChange={(event) => { onSearch(event.target.value); onPickerOpen(true); }}/><button type="button" aria-label="显示任务列表" onClick={() => onPickerOpen(!pickerOpen)}><ChevronDown size={16}/></button></div>{pickerOpen && <div className="job-search-menu">{filtered.length === 0 ? <span className="job-picker-empty">未找到匹配任务</span> : filtered.map((job) => <button type="button" className={`job-picker-item ${job.id === selectedJobId ? "active" : ""}`} key={job.id} onClick={() => onSelect(job.id)}><span><strong>{job.name}</strong><small>{job.operation.toUpperCase()} · {job.source} → {job.destination}</small></span><Chip size="sm" color={statusColor[job.status]} variant="flat">{job.status}</Chip></button>)}</div>}</div><Tooltip content="刷新任务"><ActionButton iconOnly aria-label="刷新任务" onClick={onRefresh}><RefreshCw size={17}/></ActionButton></Tooltip><ActionButton className="primary-action" icon={<Plus size={18}/>} onClick={onTransfer}>新建同步</ActionButton></div></div><section className="task-file-view full-task-view">{loading ? <div className="table-loading"><Spinner color="primary"/><span>正在读取任务</span></div> : !selected ? <div className="table-empty"><Folder size={30}/><strong>尚未选择任务</strong><span>使用右上角搜索选择任务，或新建一个同步任务。</span></div> : <><header className="selected-job-heading"><div><Chip color={statusColor[selected.status]} variant="flat">{selected.status}</Chip><span>{selected.operation === "sync" ? "镜像同步" : "增量复制"} · 创建于 {new Date(selected.createdAt).toLocaleString()}</span></div><div>{selected.status === "running" && <ActionButton className="danger-action" iconOnly aria-label="取消任务" onClick={() => onStop(selected.id)}><X size={16}/></ActionButton>}</div></header><nav className="detail-tabs"><button className={detailTab === "transferring" ? "active" : ""} onClick={() => onTab("transferring")}>进行中 <b>{detailCounts.transferring}</b></button><button className={detailTab === "finished" ? "active" : ""} onClick={() => onTab("finished")}>已完成 <b>{detailCounts.finished}</b></button><button className={detailTab === "information" ? "active" : ""} onClick={() => onTab("information")}>任务信息</button></nav>{detailTab === "information" ? <TaskInfo job={selected}/> : <section className="file-section tab-file-section"><div className="file-section-heading"><strong>{detailTab === "transferring" ? "进行中" : "已完成"}</strong><span>{detailTab === "transferring" ? `${formatSize(selected.stats?.speed)}/s` : `${formatSize(selected.stats?.bytes)} / ${formatSize(selected.stats?.totalBytes)}`}</span></div>{detailFiles.length ? <><FileRows files={detailFiles}/><div className="file-pagination"><span>第 {detailPage} / {pageCount} 页，共 {detailTotal} 个文件</span><div><ActionButton disabled={detailPage <= 1} onClick={() => onPage(detailPage - 1)}>上一页</ActionButton><ActionButton disabled={detailPage >= pageCount} onClick={() => onPage(detailPage + 1)}>下一页</ActionButton></div></div></> : <div className="file-section-empty">{detailTab === "transferring" ? "当前没有正在传输的文件。" : "尚未记录完成或失败的文件。"}</div>}</section>}</>}</section></>; }
+function TaskInfo({job}: {job: SyncJob}) { return <section className="task-information"><strong>任务信息</strong><dl><div><dt>同步方式</dt><dd>{job.operation === "sync" ? "镜像同步" : "增量复制"}</dd></div><div><dt>任务状态</dt><dd>{job.status}</dd></div><div><dt>文件进度</dt><dd>{job.stats?.transfers || 0} / {job.stats?.totalTransfers || 0}</dd></div><div><dt>创建时间</dt><dd>{new Date(job.createdAt).toLocaleString()}</dd></div><div><dt>完成时间</dt><dd>{job.finishedAt ? new Date(job.finishedAt).toLocaleString() : "--"}</dd></div><div><dt>预计剩余</dt><dd>{job.stats?.eta ? formatDuration(job.stats.eta) : "--"}</dd></div></dl>{job.error && <p className="task-error">{job.error}</p>}</section>; }
+function FileRows({files}: {files: SyncJob["files"]}) { return <div className="managed-file-list">{files?.map((file) => <div className="managed-file-row" key={file.id}><span className="file-badge"><Copy size={15}/></span><div><strong>{file.path}</strong>{file.error && <small>{file.error}</small>}</div><span>{formatSize(file.bytes)} / {formatSize(file.size)}</span><Chip size="sm" color={file.status === "failed" ? "danger" : file.status === "transferring" ? "warning" : "success"} variant="flat">{file.status}</Chip></div>)}</div>; }
+function TaskHistoryView({loading, jobs, activeJobs, remotes, expandedJobId, onAdd, onTransfer, onRefresh, onStop, onToggle}: any) { return <><div className="content-heading"><div><p className="crumb">文件空间 / 全部文件</p><h1>文件管理</h1></div><ActionButton className="primary-action" icon={<Plus size={18}/>} onClick={onTransfer}>新建同步</ActionButton></div><div className="storage-cards"><SummaryCard label="已连接" value={`${remotes.length} 个远端`} caption="远端存储" action={onAdd}/><SummaryCard label="传输总量" value={`${jobs.length} 个任务`} caption="SQLite 历史记录"/><SummaryCard label="运行中" value={`${activeJobs.length} 个任务`} caption="实时同步"/><SummaryCard label="RC 服务" value="在线" caption="服务状态"/></div><div className="file-toolbar"><ActionButton className="active-toolbar">任务列表</ActionButton><ActionButton icon={<RefreshCw size={15}/>} onClick={onRefresh}>刷新</ActionButton></div><div className="task-table"><div className="table-head"><span>任务名称</span><span>源存储</span><span>类型</span><span>状态</span><span>创建时间</span><span>操作</span></div>{loading ? <div className="table-loading"><Spinner color="primary"/><span>正在读取任务</span></div> : jobs.length === 0 ? <div className="table-empty"><Folder size={30}/><strong>尚无同步任务</strong></div> : jobs.map((job: SyncJob) => <div key={job.id}><div className="table-row task-row-clickable" onClick={() => onToggle(job.id)}><div className="task-name"><span className="file-badge"><Copy size={17}/></span><div><strong>{job.name}</strong><small>{job.source} → {job.destination}</small></div></div><span>{job.source.split(":", 1)[0]}</span><span className="mono">{job.operation.toUpperCase()}</span><Chip size="sm" color={statusColor[job.status]} variant="flat">{job.status}</Chip><span className="mono">{new Date(job.createdAt).toLocaleString()}</span><div className="task-actions" onClick={(event) => event.stopPropagation()}><ActionButton className="detail-action" onClick={() => onToggle(job.id)}>{expandedJobId === job.id ? "收起" : "详情"}</ActionButton>{job.status === "running" && <ActionButton className="danger-action" iconOnly aria-label="取消任务" onClick={() => onStop(job.id)}><X size={16}/></ActionButton>}</div></div>{expandedJobId === job.id && <TaskDetails job={job}/>}</div>)}</div></>; }
+function TaskDetails({job}: {job: SyncJob}) { return <div className="task-details"><div className="task-progress"><strong>总体进度</strong><Progress size="sm" value={progressPercent(job)} aria-label="总体进度"/><small>{formatSize(job.stats?.bytes)} / {formatSize(job.stats?.totalBytes)} · {job.stats?.transfers || 0} / {job.stats?.totalTransfers || 0} 个文件 · {formatSize(job.stats?.speed)}/s</small></div><div className="file-transfer-list"><strong>文件传输明细</strong>{!job.files?.length ? <span>没有可展示的文件传输记录。</span> : job.files.map((file) => <div className="file-transfer-row" key={file.id}><span>{file.path}</span><span>{formatSize(file.bytes)} / {formatSize(file.size)}</span><Chip size="sm" color={file.status === "failed" ? "danger" : file.status === "transferring" ? "warning" : "success"} variant="flat">{file.status}</Chip>{file.error && <small>{file.error}</small>}</div>)}</div></div>; }
+function SyncLocationPicker({ label, location, remotes, onRemoteChange, onDirectoryChange }: { label: string; location: SyncLocation; remotes: Remote[]; onRemoteChange: (name: string) => void; onDirectoryChange: (path: string) => void }) {
+  const locationPath = `${location.remoteName}:${location.path ? `/${location.path}` : ""}`;
+  return <section className="sync-location-picker"><div className="sync-location-heading"><strong>{label}</strong><span>{location.remoteName ? locationPath : "选择已添加的存储"}</span></div><select aria-label={`选择${label}存储`} value={location.remoteName} onChange={(event) => onRemoteChange(event.target.value)}><option value="">选择存储</option>{remotes.map((remote) => <option key={remote.id} value={remote.name}>{remote.name} · {remote.type}</option>)}</select>{location.remoteName && <div className="sync-directory-browser">{location.path && <button type="button" className="sync-directory-up" onClick={() => onDirectoryChange(location.path.split("/").slice(0, -1).join("/"))}>返回上一级</button>}{location.loading ? <div className="sync-directory-empty"><Spinner size="sm"/> 正在读取目录</div> : location.entries.filter((entry) => entry.IsDir).length === 0 ? <div className="sync-directory-empty">当前目录没有子目录</div> : location.entries.filter((entry) => entry.IsDir).map((entry) => <button type="button" className="sync-directory-entry" key={entry.Path || entry.Name} onClick={() => onDirectoryChange(entry.Path || (location.path ? `${location.path}/${entry.Name}` : entry.Name))}><Folder size={15}/><span>{entry.Name}</span><ChevronDown className="directory-chevron" size={14}/></button>)}</div>}</section>;
+}
+function SourceConfigFields({ type, config, onChange }: { type: string; config: Record<string, string>; onChange: (key: string, value: string) => void }) {
+  const field = (key: string, label: string, placeholder = "", required = false, password = false) => <label className="source-field"><span>{label}</span><input placeholder={placeholder} type={password ? "password" : "text"} value={config[key] || ""} onChange={(event) => onChange(key, event.target.value)} required={required}/></label>;
+  if (type === "local") return <div className="source-field-note">本地文件系统无需额外配置，rclone 将使用运行服务的机器路径。</div>;
+  if (type === "webdav") return <>{field("url", "WebDAV URL", "https://dav.example.com/remote.php/dav/files/user", true)}<label className="source-field"><span>服务商</span><select value={config.vendor || "other"} onChange={(event) => onChange("vendor", event.target.value)}>{["other", "nextcloud", "owncloud", "sharepoint"].map((vendor) => <option key={vendor} value={vendor}>{vendor}</option>)}</select></label>{field("user", "用户名")}{field("pass", "密码", "", false, true)}</>;
+  if (type === "smb") return <>{field("host", "主机地址", "192.168.1.10 或 server/share", true)}{field("user", "用户名")}{field("pass", "密码", "", false, true)}{field("domain", "域名", "可选")}</>;
+  if (type === "ftp") return <>{field("host", "FTP 主机地址", "ftp.example.com", true)}{field("port", "端口", "21")}{field("user", "用户名")}{field("pass", "密码", "", false, true)}<label className="source-field"><span>显式 TLS</span><select value={config.explicit_tls || "false"} onChange={(event) => onChange("explicit_tls", event.target.value)}><option value="false">关闭</option><option value="true">开启</option></select></label></>;
+  return <>{field("host", "SFTP 主机地址", "sftp.example.com", true)}{field("port", "端口", "22")}{field("user", "用户名")}{field("pass", "密码", "", false, true)}{field("key_file", "SSH 私钥文件", "可选，例如 C:\\Users\\user\\.ssh\\id_ed25519")}</>;
+}
+function ActionButton({ children, className = "", icon, endIcon, iconOnly = false, ...props }: React.ButtonHTMLAttributes<HTMLButtonElement> & { icon?: React.ReactNode; endIcon?: React.ReactNode; iconOnly?: boolean }) { return <button type="button" className={`action-button ${iconOnly ? "icon-only" : ""} ${className}`} {...props}>{icon || (iconOnly ? children : null)}{!iconOnly && <span>{children}</span>}{endIcon}</button>; }
+function formatSize(size = 0) { if (!size) return "0 B"; const units = ["B", "KB", "MB", "GB", "TB"]; const index = Math.min(Math.floor(Math.log(size) / Math.log(1024)), units.length - 1); return `${(size / 1024 ** index).toFixed(index ? 1 : 0)} ${units[index]}`; }
+function progressPercent(job: SyncJob) { const total = job.stats?.totalBytes || 0; return total ? Math.min(100, Math.round(((job.stats?.bytes || 0) / total) * 100)) : 0; }
+function formatDuration(seconds: number) { const value = Math.max(0, Math.round(seconds)); return value >= 3600 ? `${Math.floor(value / 3600)}小时${Math.floor(value % 3600 / 60)}分` : value >= 60 ? `${Math.floor(value / 60)}分${value % 60}秒` : `${value}秒`; }
