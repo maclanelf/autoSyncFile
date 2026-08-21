@@ -1,21 +1,18 @@
-# syntax=docker/dockerfile:1.7
 FROM node:20-bookworm-slim AS base
 
 FROM base AS dependencies
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
-    --mount=type=cache,target=/var/lib/apt,sharing=locked \
-    --mount=type=cache,target=/root/.npm,sharing=locked \
-    apt-get update \
+RUN apt-get update \
     && apt-get install --no-install-recommends -y python3 make g++ \
-    && npm ci --no-audit --no-fund
+    && npm ci --no-audit --no-fund \
+    && rm -rf /var/lib/apt/lists/*
 
 FROM base AS builder
 WORKDIR /app
 COPY --from=dependencies /app/node_modules ./node_modules
 COPY . .
-RUN --mount=type=cache,target=/app/.next/cache,sharing=locked npm run build
+RUN npm run build
 
 FROM base AS runner
 WORKDIR /app
