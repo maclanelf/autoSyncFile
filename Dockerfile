@@ -3,7 +3,7 @@ FROM node:20-bookworm-slim AS base
 FROM base AS dependencies
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN apt-get update \
+RUN apt-get -o Acquire::Retries=5 update \
     && apt-get install --no-install-recommends -y python3 make g++ \
     && npm ci --no-audit --no-fund \
     && rm -rf /var/lib/apt/lists/*
