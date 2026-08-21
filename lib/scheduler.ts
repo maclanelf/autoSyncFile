@@ -1,5 +1,5 @@
-import { createJob, createSkippedScheduleJob, getRunningScheduleJob, listSchedules, updateJob, updateSchedule } from "./db";
-import { rc, startTransfer } from "./rclone";
+import { createJob, createSkippedScheduleJob, getRunningScheduleJob, listSchedules, queueTransferFiles, updateJob, updateSchedule } from "./db";
+import { listSourceFiles, rc, startTransfer } from "./rclone";
 import type { SyncSchedule } from "./types";
 
 let timer: ReturnType<typeof setInterval> | undefined;
@@ -56,7 +56,9 @@ export async function runScheduleNow(schedule: SyncSchedule) {
   }
   const statsGroup = `schedule-${schedule.id}-${crypto.randomUUID()}`;
   const result = await startTransfer(schedule.operation, schedule.source, schedule.destination, statsGroup);
-  return createJob({name: `${schedule.name}（定时）`, remoteId: schedule.remoteId, scheduleId: schedule.id, operation: schedule.operation, source: schedule.source, destination: schedule.destination, statsGroup, rcloneJobId: result.jobid});
+  const job = createJob({name: `${schedule.name}（定时）`, remoteId: schedule.remoteId, scheduleId: schedule.id, operation: schedule.operation, source: schedule.source, destination: schedule.destination, statsGroup, rcloneJobId: result.jobid});
+  queueTransferFiles(job.id, await listSourceFiles(schedule.source));
+  return job;
 }
 
 export async function runScheduleById(schedule: SyncSchedule) {

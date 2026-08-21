@@ -3,6 +3,13 @@ export async function rc<T=any>(endpoint:string, body:Record<string,unknown>={})
 export async function startTransfer(operation:"sync" | "copy", source:string, destination:string, statsGroup: string) {
   return rc<{jobid:number}>(`sync/${operation}`, {srcFs: source, dstFs: destination, _group: statsGroup, _async: true});
 }
+export async function listSourceFiles(source: string) {
+  const separator = source.indexOf(":");
+  const fs = separator < 0 ? source : source.slice(0, separator + 1);
+  const remote = separator < 0 ? "" : source.slice(separator + 1).replace(/^\/+/, "");
+  const result = await rc<{list?: Array<{Path?: string; Name?: string; Size?: number; IsDir?: boolean}>}>("operations/list", {fs, remote, recurse: true});
+  return (result.list || []).filter((entry) => !entry.IsDir && (entry.Path || entry.Name)).map((entry) => ({path: entry.Path || entry.Name!, size: entry.Size || 0}));
+}
 export async function createConfig(name:string, type:string, config:Record<string,string>) {
   const parameters = {...config};
   delete parameters.name;

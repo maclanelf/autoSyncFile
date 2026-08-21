@@ -20,7 +20,7 @@ const emptyRemote = { name: "", type: "webdav", config: sourceDefaults.webdav };
 const statusColor = { running: "warning", completed: "success", failed: "danger", cancelled: "default", skipped: "default", unknown: "default" } as const;
 type RemoteEntry = { Name: string; Path?: string; IsDir?: boolean; Size?: number };
 type SyncLocation = { remoteName: string; path: string; entries: RemoteEntry[]; loading: boolean };
-type DetailTab = "transferring" | "finished" | "information";
+type DetailTab = "all" | "transferring" | "finished" | "information";
 const emptyLocation: SyncLocation = { remoteName: "", path: "", entries: [], loading: false };
 
 export default function Home() {
@@ -31,10 +31,10 @@ export default function Home() {
   const [selectedJobId, setSelectedJobId] = useState<number | null>(null);
   const [jobSearch, setJobSearch] = useState("");
   const [isJobPickerOpen, setJobPickerOpen] = useState(false);
-  const [detailTab, setDetailTab] = useState<DetailTab>("transferring");
+  const [detailTab, setDetailTab] = useState<DetailTab>("all");
   const [detailFiles, setDetailFiles] = useState<TransferFile[]>([]);
   const [detailTotal, setDetailTotal] = useState(0);
-  const [detailCounts, setDetailCounts] = useState({transferring: 0, finished: 0});
+  const [detailCounts, setDetailCounts] = useState({transferring: 0, queued: 0, finished: 0});
   const [detailPage, setDetailPage] = useState(1);
   const [syncSource, setSyncSource] = useState<SyncLocation>(emptyLocation);
   const [syncDestination, setSyncDestination] = useState<SyncLocation>(emptyLocation);
@@ -69,7 +69,7 @@ export default function Home() {
   }
 
   useEffect(() => { load(); const timer = setInterval(load, 5000); return () => clearInterval(timer); }, []);
-  useEffect(() => { if (selectedJobId !== null) loadJobDetails(selectedJobId, "transferring", 1, true); }, [selectedJobId]);
+  useEffect(() => { if (selectedJobId !== null) loadJobDetails(selectedJobId, "all", 1); }, [selectedJobId]);
   useEffect(() => {
     if (selectedJobId === null || detailTab === "information" || !jobs.some((job) => job.id === selectedJobId && job.status === "running")) return;
     const timer = window.setInterval(() => loadJobDetails(selectedJobId, detailTab, detailPage), 1000);
@@ -132,7 +132,7 @@ export default function Home() {
     setJobPickerOpen(false);
     setDetailPage(1);
     setDetailFiles([]);
-    await loadJobDetails(id, "transferring", 1, true);
+    await loadJobDetails(id, "all", 1);
   }
   async function loadJobDetails(id: number, tab: DetailTab, page: number, preferFinished = false) {
     if (tab === "information") { setDetailTab(tab); return; }
@@ -141,11 +141,10 @@ export default function Home() {
       const data = await response.json();
       if (!response.ok) throw new Error(data.error);
       setJobs((current) => current.map((job) => job.id === id ? data : job));
-      if (preferFinished && data.total === 0) { await loadJobDetails(id, "finished", 1); return; }
       setDetailTab(tab);
       setDetailPage(data.page);
       setDetailTotal(data.total);
-      setDetailCounts(data.counts || {transferring: 0, finished: 0});
+      setDetailCounts(data.counts || {transferring: 0, queued: 0, finished: 0});
       setDetailFiles(data.files || []);
     } catch (error) { setMessage(error instanceof Error ? error.message : "无法读取任务详情"); }
   }
@@ -220,7 +219,7 @@ function FileRows({files}: {files: TransferFile[]}) {
     const speed = previous ? Math.max(0, ((file.bytes - previous.bytes) * 1000) / (now - previous.timestamp)) : 0;
     samples.current.set(file.id, {bytes: file.bytes, timestamp: now});
     const progress = file.size ? Math.min(100, Math.round((file.bytes / file.size) * 100)) : 0;
-    return <div className="managed-file-row" key={file.id}><span className="file-badge"><Copy size={15}/></span><div className="managed-file-main"><strong>{file.path}</strong><div className="file-progress-meta"><span>{formatSize(file.bytes)} / {formatSize(file.size)}</span>{file.status === "transferring" && <><span>{formatSize(speed)}/s</span><b>{progress}%</b></>}</div>{file.status === "transferring" && <div className="file-progress-track" role="progressbar" aria-label={`${file.path} 上传进度`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}><span style={{width: `${progress}%`}}/></div>}{file.error && <small>{file.error}</small>}</div><Chip size="sm" color={file.status === "failed" ? "danger" : file.status === "transferring" ? "warning" : "success"} variant="flat">{file.status}</Chip></div>;
+    return <div className="managed-file-row" key={file.id}><span className="file-badge"><Copy size={15}/></span><div className="managed-file-main"><strong>{file.path}</strong><div className="file-progress-meta"><span>{formatSize(file.bytes)} / {formatSize(file.size)}</span>{file.status === "transferring" && <><span>{formatSize(speed)}/s</span><b>{progress}%</b></>}</div>{file.status === "transferring" && <div className="file-progress-track" role="progressbar" aria-label={`${file.path} 上传进度`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}><span style={{width: `${progress}%`}}/></div>}{file.error && <small>{file.error}</small>}</div><Chip size="sm" color={file.status === "failed" ? "danger" : file.status === "transferring" ? "warning" : file.status === "queued" ? "default" : "success"} variant="flat">{file.status === "queued" ? "等待中" : file.status === "transferring" ? "传输中" : file.status === "completed" ? "已完成" : "失败"}</Chip></div>;
   })}</div>;
 }
 function TaskHistoryView({loading, jobs, activeJobs, remotes, expandedJobId, onAdd, onTransfer, onRefresh, onStop, onToggle}: any) { return <><div className="content-heading"><div><p className="crumb">文件空间 / 全部文件</p><h1>文件管理</h1></div><ActionButton className="primary-action" icon={<Plus size={18}/>} onClick={onTransfer}>新建同步</ActionButton></div><div className="storage-cards"><SummaryCard label="已连接" value={`${remotes.length} 个远端`} caption="远端存储" action={onAdd}/><SummaryCard label="传输总量" value={`${jobs.length} 个任务`} caption="SQLite 历史记录"/><SummaryCard label="运行中" value={`${activeJobs.length} 个任务`} caption="实时同步"/><SummaryCard label="RC 服务" value="在线" caption="服务状态"/></div><div className="file-toolbar"><ActionButton className="active-toolbar">任务列表</ActionButton><ActionButton icon={<RefreshCw size={15}/>} onClick={onRefresh}>刷新</ActionButton></div><div className="task-table"><div className="table-head"><span>任务名称</span><span>源存储</span><span>类型</span><span>状态</span><span>创建时间</span><span>操作</span></div>{loading ? <div className="table-loading"><Spinner color="primary"/><span>正在读取任务</span></div> : jobs.length === 0 ? <div className="table-empty"><Folder size={30}/><strong>尚无同步任务</strong></div> : jobs.map((job: SyncJob) => <div key={job.id}><div className="table-row task-row-clickable" onClick={() => onToggle(job.id)}><div className="task-name"><span className="file-badge"><Copy size={17}/></span><div><strong>{job.name}</strong><small>{job.source} → {job.destination}</small></div></div><span>{job.source.split(":", 1)[0]}</span><span className="mono">{job.operation.toUpperCase()}</span><Chip size="sm" color={statusColor[job.status]} variant="flat">{job.status}</Chip><span className="mono">{new Date(job.createdAt).toLocaleString()}</span><div className="task-actions" onClick={(event) => event.stopPropagation()}><ActionButton className="detail-action" onClick={() => onToggle(job.id)}>{expandedJobId === job.id ? "收起" : "详情"}</ActionButton>{job.status === "running" && <ActionButton className="danger-action" iconOnly aria-label="取消任务" onClick={() => onStop(job.id)}><X size={16}/></ActionButton>}</div></div>{expandedJobId === job.id && <TaskDetails job={job}/>}</div>)}</div></>; }

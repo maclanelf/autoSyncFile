@@ -21,7 +21,7 @@ body { margin: 0; background: linear-gradient(135deg, #fbfdfd, #f2f7fa 60%, #f7f
 .action-button { display: inline-flex; flex: none; align-items: center; justify-content: center; gap: 7px; min-height: 36px; padding: 0 12px; color: #263631; border: 1px solid transparent; border-radius: 8px; background: transparent; font: 600 13px Manrope, system-ui; line-height: 1; white-space: nowrap; cursor: pointer; }.action-button:hover { background: #f0f5f3; }.action-button svg { flex: none; }.action-button.icon-only { width: 36px; padding: 0; }.primary-action { color: #fff; border-color: #2578e8; background: #2578e8; box-shadow: 0 7px 15px #2578e833; }.primary-action:hover { background: #176bd9; }.active-toolbar { color: #1769c5; border-color: #bcd8f8; background: #edf5ff; }.summary-action { color: #1769c5; background: #eaf3ff; }.danger-action { color: #cf3636; }.danger-action:hover { background: #fff0f0; }
 .search-button { min-width: 122px; color: #1e6bc8; background: #eaf3ff; }
 .webui-main { min-width: 0; padding: 28px 38px; }
-.file-panel { max-width: 1500px; margin: auto; border: 1px solid #e8edf1 !important; border-radius: 18px !important; background: #fff !important; box-shadow: 0 16px 40px #36576b12 !important; }
+.file-panel { width: 100%; border: 1px solid #e8edf1 !important; border-radius: 18px !important; background: #fff !important; box-shadow: 0 16px 40px #36576b12 !important; }
 .file-panel .nextui-card-body { padding: 0 !important; }
 .panel-layout { display: grid; grid-template-columns: minmax(0, 1fr) 360px; }
 .file-content { min-width: 0; padding: 40px 44px 30px; }
