@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { getJob, listTransferFiles, updateJob, upsertTransferFile } from "@/lib/db";
-import { rc } from "@/lib/rclone";
+import { countTransferFiles, getJob, listTransferFiles, queueTransferFiles, updateJob, upsertTransferFile } from "@/lib/db";
+import { listSourceFiles, rc } from "@/lib/rclone";
 
 type RcloneTransfer = {name?: string; size?: number; bytes?: number; error?: string; startedAt?: string; completedAt?: string};
 function statsFor(result: any) { return {bytes: result.bytes, totalBytes: result.totalBytes, transfers: result.transfers, totalTransfers: result.totalTransfers, speed: result.speed, eta: result.eta, errors: result.errors}; }
@@ -8,6 +8,8 @@ async function refresh(jobId: number) {
   const job = getJob(jobId);
   if (!job) throw new Error("未找到任务记录");
   if (job.status !== "running" || !job.rcloneJobId) return job;
+  // Backfill tasks created before recursive queue discovery was fixed.
+  if (countTransferFiles(jobId) <= 4) queueTransferFiles(jobId, await listSourceFiles(job.source));
   const [status, stats, transferred] = await Promise.all([rc<any>("job/status", {jobid: job.rcloneJobId}), rc<any>("core/stats", {group: job.statsGroup}), rc<any>("core/transferred", {group: job.statsGroup})]);
   const now = new Date().toISOString();
   for (const item of (transferred.transferred || []) as RcloneTransfer[]) {

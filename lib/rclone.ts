@@ -7,7 +7,7 @@ export async function listSourceFiles(source: string) {
   const separator = source.indexOf(":");
   const fs = separator < 0 ? source : source.slice(0, separator + 1);
   const remote = separator < 0 ? "" : source.slice(separator + 1).replace(/^\/+/, "");
-  const result = await rc<{list?: Array<{Path?: string; Name?: string; Size?: number; IsDir?: boolean}>}>("operations/list", {fs, remote, recurse: true});
+  const result = await rc<{list?: Array<{Path?: string; Name?: string; Size?: number; IsDir?: boolean}>}>("operations/list", {fs, remote, opt: {recurse: true}});
   return (result.list || []).filter((entry) => !entry.IsDir && (entry.Path || entry.Name)).map((entry) => ({path: entry.Path || entry.Name!, size: entry.Size || 0}));
 }
 export async function createConfig(name:string, type:string, config:Record<string,string>) {
