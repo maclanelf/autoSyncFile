@@ -97,7 +97,7 @@ export default function Home() {
   const [selectedJobId, setSelectedJobId] = useState<number | null>(null);
   const [jobSearch, setJobSearch] = useState("");
   const [isJobPickerOpen, setJobPickerOpen] = useState(false);
-  const [detailTab, setDetailTab] = useState<DetailTab>("all");
+  const [detailTab, setDetailTab] = useState<DetailTab>("transferring");
   const [detailFiles, setDetailFiles] = useState<TransferFile[]>([]);
   const [detailTotal, setDetailTotal] = useState(0);
   const [detailCounts, setDetailCounts] = useState({
@@ -170,7 +170,7 @@ export default function Home() {
     return () => clearInterval(timer);
   }, []);
   useEffect(() => {
-    if (selectedJobId !== null) loadJobDetails(selectedJobId, "all", 1);
+    if (selectedJobId !== null) loadJobDetails(selectedJobId, "transferring", 1);
   }, [selectedJobId]);
   useEffect(() => {
     if (
@@ -381,7 +381,7 @@ export default function Home() {
     setJobPickerOpen(false);
     setDetailPage(1);
     setDetailFiles([]);
-    await loadJobDetails(id, "all", 1);
+    await loadJobDetails(id, "transferring", 1);
   }
   async function loadJobDetails(
     id: number,
@@ -1772,7 +1772,7 @@ function FileManagementView({
   detailFiles: TransferFile[];
   detailPage: number;
   detailTotal: number;
-  detailCounts: { transferring: number; finished: number };
+  detailCounts: { transferring: number; queued: number; finished: number };
   onSearch: (value: string) => void;
   onPickerOpen: (open: boolean) => void;
   onSelect: (id: number) => void;
@@ -1788,7 +1788,7 @@ function FileManagementView({
       .includes(search.toLowerCase()),
   );
   const selected = jobs.find((job) => job.id === selectedJobId);
-  const pageCount = Math.max(1, Math.ceil(detailTotal / 10));
+  const pageCount = Math.max(1, Math.ceil(detailTotal / 100));
   return (
     <>
       <div className="task-management-toolbar">
@@ -1929,7 +1929,7 @@ function FileManagementView({
                 className={detailTab === "transferring" ? "active" : ""}
                 onClick={() => onTab("transferring")}
               >
-                进行中 <b>{detailCounts.transferring}</b>
+                进行中 <b>{detailCounts.transferring + detailCounts.queued}</b>
               </button>
               <button
                 className={detailTab === "finished" ? "active" : ""}

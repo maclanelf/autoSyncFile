@@ -54,10 +54,11 @@ export async function runScheduleNow(schedule: SyncSchedule) {
       return createSkippedScheduleJob(schedule, "无法确认上一次同步任务是否完成，本次定时执行已跳过");
     }
   }
+  const sourceFiles = await listSourceFiles(schedule.source);
   const statsGroup = `schedule-${schedule.id}-${crypto.randomUUID()}`;
   const result = await startTransfer(schedule.operation, schedule.source, schedule.destination, statsGroup);
   const job = createJob({name: `${schedule.name}（定时）`, remoteId: schedule.remoteId, scheduleId: schedule.id, operation: schedule.operation, source: schedule.source, destination: schedule.destination, statsGroup, rcloneJobId: result.jobid});
-  queueTransferFiles(job.id, await listSourceFiles(schedule.source));
+  queueTransferFiles(job.id, sourceFiles);
   return job;
 }
 

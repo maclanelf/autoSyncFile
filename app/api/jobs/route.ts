@@ -10,11 +10,12 @@ export async function GET() { return NextResponse.json(listJobs()); }
 export async function POST(req: Request) {
   try {
     const input = schema.parse(await req.json());
+    const sourceFiles = await listSourceFiles(input.source);
     const statsGroup = `sync-${crypto.randomUUID()}`;
     const result = await startTransfer(input.operation, input.source, input.destination, statsGroup);
     const remoteId = ensureRemote(input.source.split(":", 1)[0]).id;
     const job = createJob({...input, remoteId, statsGroup, rcloneJobId: result.jobid});
-    queueTransferFiles(job.id, await listSourceFiles(input.source));
+    queueTransferFiles(job.id, sourceFiles);
     return NextResponse.json(job, {status: 201});
   } catch (error) { return NextResponse.json({error: error instanceof Error ? error.message : String(error)}, {status: 400}); }
 }
