@@ -1,9 +1,9 @@
-FROM node:22-bookworm-slim AS base
+FROM node:20-alpine AS base
 
 FROM base AS dependencies
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN npm ci
+RUN apk add --no-cache python3 make g++ && npm ci
 
 FROM base AS builder
 WORKDIR /app
@@ -17,7 +17,7 @@ ENV NODE_ENV=production
 ENV PORT=9223
 ENV HOSTNAME=0.0.0.0
 
-RUN groupadd --system --gid 1001 nodejs && useradd --system --uid 1001 --gid nodejs nextjs
+RUN addgroup --system --gid 1001 nodejs && adduser --system --uid 1001 --ingroup nodejs nextjs
 
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
