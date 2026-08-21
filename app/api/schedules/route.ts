@@ -1,4 +1,11 @@
 import { NextResponse } from "next/server";
-import { createSchedule, listSchedules } from "@/lib/db";
-export async function GET(){return NextResponse.json(listSchedules());}
-export async function POST(req:Request){try{return NextResponse.json(createSchedule(await req.json()),{status:201});}catch(e:any){return NextResponse.json({error:e.message},{status:400});}}
+import { createSchedule, deleteSchedule, getRemote, listSchedules, updateSchedule } from "@/lib/db";
+import { isValidCron, startScheduler } from "@/lib/scheduler";
+import { z } from "zod";
+
+const remotePath = z.string().trim().regex(/^[^:/\\]+:.+/, "请先选择存储和目录");
+const schema = z.object({name: z.string().trim().min(1).max(120), remoteId: z.number().int().positive(), operation: z.enum(["sync", "copy"]), source: remotePath, destination: remotePath, cron: z.string().trim().refine(isValidCron, "Cron 表达式无效")});
+export async function GET() { startScheduler(); return NextResponse.json(listSchedules()); }
+export async function POST(req: Request) { try { const input = schema.parse(await req.json()); if (!getRemote(input.remoteId)) throw new Error("所选数据源不存在"); const schedule = createSchedule(input); startScheduler(); return NextResponse.json(schedule, {status: 201}); } catch (error) { return NextResponse.json({error: error instanceof Error ? error.message : String(error)}, {status: 400}); } }
+export async function PATCH(req: Request) { try { const body = z.object({id: z.number().int().positive(), enabled: z.boolean().optional(), name: z.string().trim().min(1).max(120).optional(), operation: z.enum(["sync", "copy"]).optional(), source: remotePath.optional(), destination: remotePath.optional(), cron: z.string().trim().refine(isValidCron, "Cron 表达式无效").optional()}).refine((value) => value.enabled !== undefined || value.name !== undefined || value.operation !== undefined || value.source !== undefined || value.destination !== undefined || value.cron !== undefined, "没有需要更新的内容").parse(await req.json()); const schedule = updateSchedule(body.id, body); if (!schedule) throw new Error("未找到定时任务"); startScheduler(); return NextResponse.json(schedule); } catch (error) { return NextResponse.json({error: error instanceof Error ? error.message : String(error)}, {status: 400}); } }
+export async function DELETE(req: Request) { try { const {id} = z.object({id: z.number().int().positive()}).parse(await req.json()); if (!deleteSchedule(id)) throw new Error("未找到定时任务"); return NextResponse.json({ok: true}); } catch (error) { return NextResponse.json({error: error instanceof Error ? error.message : String(error)}, {status: 400}); } }

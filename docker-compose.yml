@@ -1,0 +1,33 @@
+services:
+  app:
+    build:
+      context: .
+    ports:
+      - "9223:9223"
+    environment:
+      DATABASE_PATH: /app/data/rclone.sqlite
+      RCLONE_RC_URL: http://rclone:5572
+      RCLONE_RC_USER: admin
+      RCLONE_RC_PASS: adminadmin
+    volumes:
+      - app-data:/app/data
+    depends_on:
+      rclone:
+        condition: service_started
+    restart: always
+
+  rclone:
+    image: rclone/rclone:latest
+    command:
+      - rcd
+      - --rc-addr=:5572
+      - --rc-user=admin
+      - --rc-pass=adminadmin
+      - --config=/config/rclone/rclone.conf
+    volumes:
+      - rclone-config:/config/rclone
+    restart: always
+
+volumes:
+  app-data:
+  rclone-config:
