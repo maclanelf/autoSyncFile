@@ -397,14 +397,20 @@ export default function Home() {
       const response = await fetch(`/api/jobs/${id}?state=${tab}&page=${page}`);
       const data = await response.json();
       if (!response.ok) throw new Error(data.error);
-      setJobs((current) => current.map((job) => (job.id === id ? data : job)));
-      setDetailTab(tab);
-      setDetailPage(data.page);
-      setDetailTotal(data.total);
+      // A completed job stops the running poller; load its terminal files before stopping.
+      const terminalView = data.status !== "running" && tab === "transferring";
+      const detailData = terminalView
+        ? await fetch(`/api/jobs/${id}?state=finished&page=1`).then((result) => result.json())
+        : data;
+      if (terminalView && detailData.error) throw new Error(detailData.error);
+      setJobs((current) => current.map((job) => (job.id === id ? detailData : job)));
+      setDetailTab(terminalView ? "finished" : tab);
+      setDetailPage(detailData.page);
+      setDetailTotal(detailData.total);
       setDetailCounts(
-        data.counts || { transferring: 0, queued: 0, finished: 0 },
+        detailData.counts || { transferring: 0, queued: 0, finished: 0 },
       );
-      setDetailFiles(data.files || []);
+      setDetailFiles(detailData.files || []);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "无法读取任务详情");
     }

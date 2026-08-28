@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { countTransferFiles, getJob, listTransferFiles, queueTransferFiles, updateJob, upsertTransferFile } from "@/lib/db";
+import { countTransferFiles, finalizeTransferFiles, getJob, listTransferFiles, queueTransferFiles, updateJob, upsertTransferFile } from "@/lib/db";
 import { isMissingJobError, listSourceFiles, rc } from "@/lib/rclone";
 
 type RcloneTransfer = {name?: string; size?: number; bytes?: number; error?: string; startedAt?: string; completedAt?: string};
@@ -29,6 +29,7 @@ async function refresh(jobId: number) {
     upsertTransferFile({jobId, path: item.name, size: item.size || 0, bytes: item.bytes || 0, status: "transferring", startedAt: item.startedAt || now});
   }
   const nextStatus = status.finished ? (status.success ? "completed" : "failed") : "running";
+  if (status.finished) finalizeTransferFiles(jobId, status.success ? "completed" : "failed", now);
   return updateJob(jobId, {status: nextStatus, stats: statsFor(stats), error: status.error, finishedAt: status.finished ? now : undefined});
 }
 export async function GET(request: Request, {params}: {params: Promise<{id: string}>}) { try { const {id} = await params; const job = await refresh(Number(id)); const query = new URL(request.url).searchParams; const state = query.get("state") === "finished" ? "finished" : "transferring"; const page = Math.max(1, Number(query.get("page")) || 1); return NextResponse.json({...job, ...listTransferFiles(Number(id), state, page)}); } catch (error) { return NextResponse.json({error: error instanceof Error ? error.message : String(error)}, {status: 502}); } }
