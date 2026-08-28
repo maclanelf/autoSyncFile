@@ -1,5 +1,9 @@
 const base = process.env.RCLONE_RC_URL || "http://127.0.0.1:5572";
 export async function rc<T=any>(endpoint:string, body:Record<string,unknown>={}) : Promise<T> { const headers:Record<string,string>={"content-type":"application/json"}; if(process.env.RCLONE_RC_USER) headers.authorization="Basic "+Buffer.from(`${process.env.RCLONE_RC_USER}:${process.env.RCLONE_RC_PASS||""}`).toString("base64"); const res=await fetch(`${base}/${endpoint}`,{method:"POST",headers,body:JSON.stringify(body)}); const data=await res.json().catch(()=>({})); if(!res.ok || data.error) throw new Error(data.error||`rclone RC ${res.status}`); return data; }
+export function isMissingJobError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return /(?:job|jobid).*?(?:not found|does not exist|unknown|invalid)|(?:not found|does not exist|unknown|invalid).*?(?:job|jobid)/i.test(message);
+}
 export async function startTransfer(operation:"sync" | "copy", source:string, destination:string, statsGroup: string) {
   return rc<{jobid:number}>(`sync/${operation}`, {srcFs: source, dstFs: destination, _group: statsGroup, _async: true});
 }

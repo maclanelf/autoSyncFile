@@ -1,5 +1,5 @@
 import { createJob, createSkippedScheduleJob, getRunningScheduleJob, listSchedules, queueTransferFiles, updateJob, updateSchedule } from "./db";
-import { listSourceFiles, rc, startTransfer } from "./rclone";
+import { isMissingJobError, listSourceFiles, rc, startTransfer } from "./rclone";
 import type { SyncSchedule } from "./types";
 
 let timer: ReturnType<typeof setInterval> | undefined;
@@ -50,8 +50,12 @@ export async function runScheduleNow(schedule: SyncSchedule) {
       const status = await rc<{finished?: boolean; success?: boolean; error?: string}>("job/status", {jobid: previousJob.rcloneJobId});
       if (!status.finished) return createSkippedScheduleJob(schedule, "上一次同步任务尚未完成，本次定时执行已跳过");
       updateJob(previousJob.id, {status: status.success ? "completed" : "failed", error: status.error, finishedAt: now});
-    } catch {
-      return createSkippedScheduleJob(schedule, "无法确认上一次同步任务是否完成，本次定时执行已跳过");
+    } catch (error) {
+      if (isMissingJobError(error)) {
+        updateJob(previousJob.id, {status: "failed", error: "rclone 重启后未找到任务，该同步已中断", finishedAt: now});
+      } else {
+        return createSkippedScheduleJob(schedule, "无法确认上一次同步任务是否完成，本次定时执行已跳过");
+      }
     }
   }
   const sourceFiles = await listSourceFiles(schedule.source);
