@@ -1196,8 +1196,12 @@ function SchedulePage({
 }: {
   remotes: Remote[];
   onMessage: (message: string) => void;
-}) {
-  return <SchedulePanel remotes={remotes} onMessage={onMessage} />;
+  }) {
+  return (
+    <div className="schedule-page">
+      <SchedulePanel remotes={remotes} onMessage={onMessage} />
+    </div>
+  );
 }
 function SchedulePanel({
   remotes,
