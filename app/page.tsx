@@ -74,7 +74,7 @@ type SyncLocation = {
   entries: RemoteEntry[];
   loading: boolean;
 };
-type DetailTab = "all" | "transferring" | "finished" | "information";
+type DetailTab = "all" | "transferring" | "finished" | "failed" | "information";
 const emptyLocation: SyncLocation = {
   remoteName: "",
   path: "",
@@ -104,6 +104,7 @@ export default function Home() {
     transferring: 0,
     queued: 0,
     finished: 0,
+    failed: 0,
   });
   const [detailPage, setDetailPage] = useState(1);
   const [syncSource, setSyncSource] = useState<SyncLocation>(emptyLocation);
@@ -170,7 +171,13 @@ export default function Home() {
     return () => clearInterval(timer);
   }, []);
   useEffect(() => {
-    if (selectedJobId !== null) loadJobDetails(selectedJobId, "transferring", 1);
+    if (selectedJobId === null) return;
+    const status = jobs.find((job) => job.id === selectedJobId)?.status;
+    loadJobDetails(
+      selectedJobId,
+      status === "completed" ? "finished" : status === "failed" ? "failed" : "transferring",
+      1,
+    );
   }, [selectedJobId]);
   useEffect(() => {
     if (
@@ -376,12 +383,34 @@ export default function Home() {
     setMessage("任务已取消");
     load();
   }
+  async function retryFiles(jobId: number, fileIds?: number[]) {
+    const response = await fetch(`/api/jobs/${jobId}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(fileIds?.length ? { fileIds } : {}),
+    });
+    const data = await response.json();
+    setMessage(
+      response.ok
+        ? `已创建重试任务，共 ${fileIds?.length || detailCounts.failed} 个文件`
+        : data.error,
+    );
+    if (response.ok) await selectJob(data.id);
+    await load();
+  }
   async function selectJob(id: number) {
+    const status = jobs.find((job) => job.id === id)?.status;
+    const initialTab =
+      status === "completed"
+        ? "finished"
+        : status === "failed"
+          ? "failed"
+          : "transferring";
     setSelectedJobId(id);
     setJobPickerOpen(false);
     setDetailPage(1);
     setDetailFiles([]);
-    await loadJobDetails(id, "transferring", 1);
+    await loadJobDetails(id, initialTab, 1);
   }
   async function loadJobDetails(
     id: number,
@@ -397,18 +426,13 @@ export default function Home() {
       const response = await fetch(`/api/jobs/${id}?state=${tab}&page=${page}`);
       const data = await response.json();
       if (!response.ok) throw new Error(data.error);
-      // A completed job stops the running poller; load its terminal files before stopping.
-      const terminalView = data.status !== "running" && tab === "transferring";
-      const detailData = terminalView
-        ? await fetch(`/api/jobs/${id}?state=finished&page=1`).then((result) => result.json())
-        : data;
-      if (terminalView && detailData.error) throw new Error(detailData.error);
+      const detailData = data;
       setJobs((current) => current.map((job) => (job.id === id ? detailData : job)));
-      setDetailTab(terminalView ? "finished" : tab);
+      setDetailTab(tab);
       setDetailPage(detailData.page);
       setDetailTotal(detailData.total);
       setDetailCounts(
-        detailData.counts || { transferring: 0, queued: 0, finished: 0 },
+        detailData.counts || { transferring: 0, queued: 0, finished: 0, failed: 0 },
       );
       setDetailFiles(detailData.files || []);
     } catch (error) {
@@ -515,6 +539,7 @@ export default function Home() {
                     }
                     onTransfer={openTransfer}
                     onStop={stop}
+                    onRetry={retryFiles}
                     onRefresh={load}
                   />
                 ) : view === "schedules" ? (
@@ -1766,6 +1791,7 @@ function FileManagementView({
   onPage,
   onTransfer,
   onStop,
+  onRetry,
   onRefresh,
 }: {
   loading: boolean;
@@ -1778,7 +1804,7 @@ function FileManagementView({
   detailFiles: TransferFile[];
   detailPage: number;
   detailTotal: number;
-  detailCounts: { transferring: number; queued: number; finished: number };
+  detailCounts: { transferring: number; queued: number; finished: number; failed: number };
   onSearch: (value: string) => void;
   onPickerOpen: (open: boolean) => void;
   onSelect: (id: number) => void;
@@ -1786,6 +1812,7 @@ function FileManagementView({
   onPage: (page: number) => void;
   onTransfer: () => void;
   onStop: (id: number) => void;
+  onRetry: (jobId: number, fileIds?: number[]) => void;
   onRefresh: () => void;
 }) {
   const filtered = jobs.filter((job) =>
@@ -1944,6 +1971,12 @@ function FileManagementView({
                 已完成 <b>{detailCounts.finished}</b>
               </button>
               <button
+                className={detailTab === "failed" ? "active failed-tab" : "failed-tab"}
+                onClick={() => onTab("failed")}
+              >
+                失败 <b>{detailCounts.failed}</b>
+              </button>
+              <button
                 className={detailTab === "information" ? "active" : ""}
                 onClick={() => onTab("information")}
               >
@@ -1956,17 +1989,37 @@ function FileManagementView({
               <section className="file-section tab-file-section">
                 <div className="file-section-heading">
                   <strong>
-                    {detailTab === "transferring" ? "进行中" : "已完成"}
+                    {detailTab === "transferring"
+                      ? "进行中"
+                      : detailTab === "failed"
+                        ? "失败文件"
+                        : "已完成"}
                   </strong>
                   <span>
                     {detailTab === "transferring"
                       ? `${formatSize(selected.stats?.speed)}/s`
                       : `${formatSize(selected.stats?.bytes)} / ${formatSize(selected.stats?.totalBytes)}`}
                   </span>
+                  {detailTab === "failed" && detailCounts.failed > 0 && (
+                    <ActionButton
+                      className="retry-all-action"
+                      icon={<RefreshCw size={15} />}
+                      onClick={() => onRetry(selected.id)}
+                    >
+                      批量重试
+                    </ActionButton>
+                  )}
                 </div>
                 {detailFiles.length ? (
                   <>
-                    <FileRows files={detailFiles} />
+                    <FileRows
+                      files={detailFiles}
+                      onRetry={
+                        detailTab === "failed"
+                          ? (fileId) => onRetry(selected.id, [fileId])
+                          : undefined
+                      }
+                    />
                     <div className="file-pagination">
                       <span>
                         第 {detailPage} / {pageCount} 页，共 {detailTotal}{" "}
@@ -1992,7 +2045,9 @@ function FileManagementView({
                   <div className="file-section-empty">
                     {detailTab === "transferring"
                       ? "当前没有正在传输的文件。"
-                      : "尚未记录完成或失败的文件。"}
+                      : detailTab === "failed"
+                        ? "当前没有失败文件。"
+                        : "尚未记录完成的文件。"}
                   </div>
                 )}
               </section>
@@ -2041,7 +2096,13 @@ function TaskInfo({ job }: { job: SyncJob }) {
     </section>
   );
 }
-function FileRows({ files }: { files: TransferFile[] }) {
+function FileRows({
+  files,
+  onRetry,
+}: {
+  files: TransferFile[];
+  onRetry?: (fileId: number) => void;
+}) {
   const samples = useRef(
     new Map<number, { bytes: number; timestamp: number }>(),
   );
@@ -2114,6 +2175,17 @@ function FileRows({ files }: { files: TransferFile[] }) {
                     ? "已完成"
                     : "失败"}
             </Chip>
+            {file.status === "failed" && onRetry && (
+              <ActionButton
+                className="retry-file-action"
+                iconOnly
+                aria-label={`重试 ${file.path}`}
+                title="重试文件"
+                onClick={() => onRetry(file.id)}
+              >
+                <RefreshCw size={15} />
+              </ActionButton>
+            )}
           </div>
         );
       })}

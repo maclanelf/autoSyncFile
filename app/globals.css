@@ -82,6 +82,7 @@ body { margin: 0; background: linear-gradient(135deg, #fbfdfd, #f2f7fa 60%, #f7f
 /* Per-file transfer telemetry remains visible without expanding task rows. */
 .managed-file-list { display: grid; gap: 8px; }
 .managed-file-row { display: grid; grid-template-columns: 27px minmax(0, 1fr) auto; gap: 11px; align-items: center; padding: 11px 12px; border: 1px solid #e4ebef; border-radius: 8px; background: #fff; }
+.managed-file-row:has(.retry-file-action) { grid-template-columns: 27px minmax(0, 1fr) auto 32px; }.retry-file-action { min-width: 32px; width: 32px; height: 32px; padding: 0; color: #b53b3b; border-color: #f0c8c8; background: #fff7f7; }.retry-file-action:hover { color: #fff; border-color: #d75252; background: #d75252; }.retry-all-action { min-height: 30px; padding-inline: 9px; color: #b53b3b; border-color: #efc5c5; background: #fff7f7; }.retry-all-action:hover { color: #fff; border-color: #d75252; background: #d75252; }.detail-tabs button.failed-tab { color: #b84a4a; }.detail-tabs button.failed-tab b { color: #b84a4a; background: #fff0f0; }.detail-tabs button.failed-tab.active::after { background: #d75252; }
 .managed-file-main { display: grid; min-width: 0; gap: 6px; }
 .managed-file-main > strong { overflow: hidden; color: #3a4c54; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .managed-file-main > small { color: #bd3e3e; font-size: 10px; }

@@ -4,8 +4,8 @@ export function isMissingJobError(error: unknown) {
   const message = error instanceof Error ? error.message : String(error);
   return /(?:job|jobid).*?(?:not found|does not exist|unknown|invalid)|(?:not found|does not exist|unknown|invalid).*?(?:job|jobid)/i.test(message);
 }
-export async function startTransfer(operation:"sync" | "copy", source:string, destination:string, statsGroup: string) {
-  return rc<{jobid:number}>(`sync/${operation}`, {srcFs: source, dstFs: destination, _group: statsGroup, _async: true});
+export async function startTransfer(operation:"sync" | "copy", source:string, destination:string, statsGroup: string, files?: string[]) {
+  return rc<{jobid:number}>(`sync/${operation}`, {srcFs: source, dstFs: destination, _group: statsGroup, _async: true, ...(files?.length ? {_filter: {filesFromRaw: files}} : {})});
 }
 export async function listSourceFiles(source: string) {
   const separator = source.indexOf(":");
