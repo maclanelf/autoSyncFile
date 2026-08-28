@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { countTransferFiles, createJob, ensureRemote, finalizeTransferFiles, getJob, listFailedTransferFiles, listTransferFiles, queueTransferFiles, updateJob, upsertTransferFile } from "@/lib/db";
+import { completeFullyTransferredFiles, countTransferFiles, createJob, ensureRemote, finalizeTransferFiles, getJob, listFailedTransferFiles, listTransferFiles, queueTransferFiles, updateJob, upsertTransferFile } from "@/lib/db";
 import { isMissingJobError, listSourceFiles, rc, startTransfer } from "@/lib/rclone";
 import { z } from "zod";
 
@@ -27,8 +27,12 @@ async function refresh(jobId: number) {
   }
   for (const item of (stats.transferring || []) as RcloneTransfer[]) {
     if (!item.name) continue;
-    upsertTransferFile({jobId, path: item.name, size: item.size || 0, bytes: item.bytes || 0, status: "transferring", startedAt: item.startedAt || now});
+    const size = item.size || 0;
+    const bytes = item.bytes || 0;
+    const completed = Boolean(item.completedAt) || (size > 0 && bytes >= size);
+    upsertTransferFile({jobId, path: item.name, size, bytes, status: completed ? "completed" : "transferring", startedAt: item.startedAt || now, finishedAt: completed ? (item.completedAt || now) : undefined});
   }
+  completeFullyTransferredFiles(jobId, now);
   const nextStatus = status.finished ? (status.success ? "completed" : "failed") : "running";
   if (status.finished) finalizeTransferFiles(jobId, status.success ? "completed" : "failed", now);
   return updateJob(jobId, {status: nextStatus, stats: statsFor(stats), error: status.error, finishedAt: status.finished ? now : undefined});
