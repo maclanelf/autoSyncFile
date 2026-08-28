@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { completeFullyTransferredFiles, countTransferFiles, createJob, ensureRemote, finalizeTransferFiles, getJob, listFailedTransferFiles, listTransferFiles, queueTransferFiles, updateJob, upsertTransferFile } from "@/lib/db";
+import { completeFullyTransferredFiles, countTransferFiles, createJob, ensureRemote, finalizeTransferFiles, getJob, listFailedTransferFiles, listStaleTransferringFiles, listTransferFiles, markTransferFileCompleted, queueTransferFiles, updateJob, upsertTransferFile } from "@/lib/db";
 import { isMissingJobError, listSourceFiles, rc, startTransfer } from "@/lib/rclone";
 import { z } from "zod";
 
@@ -33,6 +33,20 @@ async function refresh(jobId: number) {
     upsertTransferFile({jobId, path: item.name, size, bytes, status: completed ? "completed" : "transferring", startedAt: item.startedAt || now, finishedAt: completed ? (item.completedAt || now) : undefined});
   }
   completeFullyTransferredFiles(jobId, now);
+  // rclone removes completed files from both snapshots. Verify a bounded number
+  // of old database entries against the destination to close that gap safely.
+  const separator = job.destination.indexOf(":");
+  if (separator >= 0) {
+    const fs = job.destination.slice(0, separator + 1);
+    const root = job.destination.slice(separator + 1).replace(/^\/+/, "").replace(/\/+$/, "");
+    const activePaths = new Set((stats.transferring || []).map((item: RcloneTransfer) => item.name));
+    const cutoff = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+    for (const file of listStaleTransferringFiles(jobId, cutoff)) {
+      if (activePaths.has(file.path) || activePaths.has(file.path.replace(/^real\//, ""))) continue;
+      const result = await rc<any>("operations/stat", {fs, remote: `${root}/${file.path.replace(/^real\//, "")}`}).catch(() => null);
+      if (result && Number(result.Size) === file.size) markTransferFileCompleted(file.id, now);
+    }
+  }
   const nextStatus = status.finished ? (status.success ? "completed" : "failed") : "running";
   if (status.finished) finalizeTransferFiles(jobId, status.success ? "completed" : "failed", now);
   return updateJob(jobId, {status: nextStatus, stats: statsFor(stats), error: status.error, finishedAt: status.finished ? now : undefined});
