@@ -173,12 +173,7 @@ export default function Home() {
   }, []);
   useEffect(() => {
     if (selectedJobId === null) return;
-    const status = jobs.find((job) => job.id === selectedJobId)?.status;
-    loadJobDetails(
-      selectedJobId,
-      status === "completed" ? "finished" : status === "failed" ? "failed" : "transferring",
-      1,
-    );
+    loadJobDetails(selectedJobId, detailTab, 1);
   }, [selectedJobId]);
   useEffect(() => {
     if (
@@ -400,18 +395,11 @@ export default function Home() {
     await load();
   }
   async function selectJob(id: number) {
-    const status = jobs.find((job) => job.id === id)?.status;
-    const initialTab =
-      status === "completed"
-        ? "finished"
-        : status === "failed"
-          ? "failed"
-          : "transferring";
     setSelectedJobId(id);
     setJobPickerOpen(false);
     setDetailPage(1);
     setDetailFiles([]);
-    await loadJobDetails(id, initialTab, 1);
+    await loadJobDetails(id, detailTab, 1);
   }
   async function loadJobDetails(
     id: number,
