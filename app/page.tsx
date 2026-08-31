@@ -108,6 +108,7 @@ export default function Home() {
   });
   const [detailPage, setDetailPage] = useState(1);
   const [detailSearch, setDetailSearch] = useState("");
+  const detailRequestActive = useRef(false);
   const [syncSource, setSyncSource] = useState<SyncLocation>(emptyLocation);
   const [syncDestination, setSyncDestination] =
     useState<SyncLocation>(emptyLocation);
@@ -136,13 +137,7 @@ export default function Home() {
       ]);
       const remoteData = await remoteResponse.json();
       const jobData = await jobsResponse.json();
-      const updated = await Promise.all(
-        jobData.map(async (job: SyncJob) =>
-          job.status === "running" || job.id === selectedJobId
-            ? (await fetch(`/api/jobs/${job.id}`)).json().catch(() => job)
-            : job,
-        ),
-      );
+      const updated = jobData as SyncJob[];
       setRemotes(remoteData);
       setJobs(updated);
       setSelectedJobId((current) =>
@@ -176,18 +171,18 @@ export default function Home() {
     loadJobDetails(selectedJobId, detailTab, 1);
   }, [selectedJobId]);
   useEffect(() => {
-    if (
-      selectedJobId === null ||
-      detailTab === "information" ||
-      !jobs.some((job) => job.id === selectedJobId && job.status === "running")
-    )
-      return;
-    const timer = window.setInterval(
-      () => loadJobDetails(selectedJobId, detailTab, detailPage),
-      1000,
-    );
+    if (selectedJobId === null || detailTab === "information") return;
+    const refresh = () => {
+      if (detailRequestActive.current) return;
+      detailRequestActive.current = true;
+      void loadJobDetails(selectedJobId, detailTab, detailPage).finally(() => {
+        detailRequestActive.current = false;
+      });
+    };
+    refresh();
+    const timer = window.setInterval(refresh, 5000);
     return () => window.clearInterval(timer);
-  }, [selectedJobId, detailTab, detailPage, detailSearch, jobs]);
+  }, [selectedJobId, detailTab, detailPage, detailSearch]);
   useEffect(() => {
     if (view === "storage" && selectedRemote)
       browse(selectedRemote, remotePath);

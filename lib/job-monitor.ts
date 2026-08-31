@@ -49,6 +49,14 @@ export async function refreshJob(jobId: number) {
   return updateJob(jobId, {status: nextStatus, stats: statsFor(stats), error: status.error, finishedAt: status.finished ? now : undefined});
 }
 
+let monitoring = false;
+
 export async function refreshRunningJobs() {
-  await Promise.allSettled(listJobs().filter((job) => job.status === "running").map((job) => refreshJob(job.id)));
+  if (monitoring) return;
+  monitoring = true;
+  try {
+    await Promise.allSettled(listJobs().filter((job) => job.status === "running").map((job) => refreshJob(job.id)));
+  } finally {
+    monitoring = false;
+  }
 }
