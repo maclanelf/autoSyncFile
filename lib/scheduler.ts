@@ -1,8 +1,10 @@
-import { createJob, createSkippedScheduleJob, getRunningScheduleJob, listSchedules, queueTransferFiles, updateJob, updateSchedule } from "./db";
+import { createJob, getRunningScheduleJob, listSchedules, queueTransferFiles, updateJob, updateSchedule } from "./db";
+import { refreshRunningJobs } from "./job-monitor";
 import { isMissingJobError, listSourceFiles, rc, startTransfer } from "./rclone";
 import type { SyncSchedule } from "./types";
 
 let timer: ReturnType<typeof setInterval> | undefined;
+let monitorTimer: ReturnType<typeof setInterval> | undefined;
 let starting = false;
 let running = false;
 
@@ -48,13 +50,13 @@ export async function runScheduleNow(schedule: SyncSchedule) {
   if (previousJob) {
     try {
       const status = await rc<{finished?: boolean; success?: boolean; error?: string}>("job/status", {jobid: previousJob.rcloneJobId});
-      if (!status.finished) return createSkippedScheduleJob(schedule, "上一次同步任务尚未完成，本次定时执行已跳过");
+      if (!status.finished) return {status: "skipped" as const, reason: "上一次同步任务尚未完成，本次定时执行已跳过"};
       updateJob(previousJob.id, {status: status.success ? "completed" : "failed", error: status.error, finishedAt: now});
     } catch (error) {
       if (isMissingJobError(error)) {
         updateJob(previousJob.id, {status: "failed", error: "rclone 重启后未找到任务，该同步已中断", finishedAt: now});
       } else {
-        return createSkippedScheduleJob(schedule, "无法确认上一次同步任务是否完成，本次定时执行已跳过");
+        return {status: "skipped" as const, reason: "无法确认上一次同步任务是否完成，本次定时执行已跳过"};
       }
     }
   }
@@ -77,7 +79,7 @@ export async function runDueSchedules(now = new Date()) {
     const minute = Math.floor(now.getTime() / 60000);
     const due = listSchedules(true).filter((schedule) => cronMatches(schedule.cron, now) && Math.floor(new Date(schedule.lastRunAt || 0).getTime() / 60000) !== minute);
     return await Promise.all(due.map(async (schedule) => {
-      try { const job = await runScheduleNow(schedule); return {scheduleId: schedule.id, jobId: job.id, skipped: job.status === "skipped"}; }
+      try { const result = await runScheduleNow(schedule); return {scheduleId: schedule.id, jobId: "id" in result ? result.id : undefined, skipped: result.status === "skipped"}; }
       catch (error) { return {scheduleId: schedule.id, error: error instanceof Error ? error.message : String(error)}; }
     }));
   } finally { running = false; }
@@ -86,6 +88,8 @@ export async function runDueSchedules(now = new Date()) {
 export function startScheduler() {
   if (timer || starting) return;
   starting = true;
+  void refreshRunningJobs();
+  monitorTimer ??= setInterval(() => void refreshRunningJobs(), 5000);
   void runDueSchedules();
   const delay = 60000 - (Date.now() % 60000) + 50;
   setTimeout(() => { void runDueSchedules(); timer = setInterval(() => void runDueSchedules(), 60000); starting = false; }, delay);

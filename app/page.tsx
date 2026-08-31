@@ -107,6 +107,7 @@ export default function Home() {
     failed: 0,
   });
   const [detailPage, setDetailPage] = useState(1);
+  const [detailSearch, setDetailSearch] = useState("");
   const [syncSource, setSyncSource] = useState<SyncLocation>(emptyLocation);
   const [syncDestination, setSyncDestination] =
     useState<SyncLocation>(emptyLocation);
@@ -191,7 +192,7 @@ export default function Home() {
       1000,
     );
     return () => window.clearInterval(timer);
-  }, [selectedJobId, detailTab, detailPage, jobs]);
+  }, [selectedJobId, detailTab, detailPage, detailSearch, jobs]);
   useEffect(() => {
     if (view === "storage" && selectedRemote)
       browse(selectedRemote, remotePath);
@@ -423,7 +424,7 @@ export default function Home() {
       return;
     }
     try {
-      const response = await fetch(`/api/jobs/${id}?state=${tab}&page=${page}`);
+      const response = await fetch(`/api/jobs/${id}?state=${tab}&page=${page}&search=${encodeURIComponent(detailSearch)}`);
       const data = await response.json();
       if (!response.ok) throw new Error(data.error);
       const detailData = data;
@@ -434,7 +435,7 @@ export default function Home() {
       setDetailCounts(
         detailData.counts || { transferring: 0, queued: 0, finished: 0, failed: 0 },
       );
-      setDetailFiles(detailData.files || []);
+    setDetailFiles(detailData.files || []);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "无法读取任务详情");
     }
@@ -515,7 +516,7 @@ export default function Home() {
             <div className="panel-layout">
               <section className="file-content">
                 {view === "tasks" ? (
-                  <FileManagementView
+              <FileManagementView
                     loading={loading}
                     jobs={jobs}
                     activeJobs={activeJobs}
@@ -527,7 +528,11 @@ export default function Home() {
                     detailPage={detailPage}
                     detailTotal={detailTotal}
                     detailCounts={detailCounts}
+                    detailSearch={detailSearch}
                     onSearch={setJobSearch}
+                    onDetailSearch={(search) => {
+                      setDetailSearch(search);
+                    }}
                     onPickerOpen={setJobPickerOpen}
                     onSelect={selectJob}
                     onTab={(tab) =>
@@ -1788,7 +1793,9 @@ function FileManagementView({
   detailPage,
   detailTotal,
   detailCounts,
+  detailSearch,
   onSearch,
+  onDetailSearch,
   onPickerOpen,
   onSelect,
   onTab,
@@ -1809,7 +1816,9 @@ function FileManagementView({
   detailPage: number;
   detailTotal: number;
   detailCounts: { transferring: number; queued: number; finished: number; failed: number };
+  detailSearch: string;
   onSearch: (value: string) => void;
+  onDetailSearch: (value: string) => void;
   onPickerOpen: (open: boolean) => void;
   onSelect: (id: number) => void;
   onTab: (tab: DetailTab) => void;
@@ -2013,6 +2022,15 @@ function FileManagementView({
                       批量重试
                     </ActionButton>
                   )}
+                </div>
+                <div className="file-search-control">
+                  <Search size={16} />
+                  <input
+                    aria-label="搜索当前标签文件"
+                    placeholder="搜索当前标签内的文件"
+                    value={detailSearch}
+                    onChange={(event) => onDetailSearch(event.target.value)}
+                  />
                 </div>
                 {detailFiles.length ? (
                   <>
