@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { rc } from "@/lib/rclone";
 
+const browseTimeoutMs = Number(process.env.RCLONE_RC_BROWSE_TIMEOUT_MS) || 60_000;
+
 export async function POST(req: Request) {
   try {
     const {path = ""} = await req.json();
@@ -10,8 +12,12 @@ export async function POST(req: Request) {
     const remote = path.slice(separator + 1).replace(/^\/+/, "");
 
     // Keep SMB's share/root in fs and send child directories as the separate remote path.
-    return NextResponse.json(await rc("operations/list", {fs, remote, opt: {recurse: false}}));
+    return NextResponse.json(
+      await rc("operations/list", {fs, remote, opt: {recurse: false}}, browseTimeoutMs),
+    );
   } catch (e: any) {
-    return NextResponse.json({error: e instanceof Error ? e.message : String(e)}, {status: 400});
+    const error = e instanceof Error ? e.message : String(e);
+    const status = /请求在 \d+ 秒后超时/.test(error) ? 504 : 400;
+    return NextResponse.json({error}, {status});
   }
 }

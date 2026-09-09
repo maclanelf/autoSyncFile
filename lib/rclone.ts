@@ -1,5 +1,37 @@
 const base = process.env.RCLONE_RC_URL || "http://127.0.0.1:5572";
-export async function rc<T=any>(endpoint:string, body:Record<string,unknown>={}) : Promise<T> { const headers:Record<string,string>={"content-type":"application/json"}; if(process.env.RCLONE_RC_USER) headers.authorization="Basic "+Buffer.from(`${process.env.RCLONE_RC_USER}:${process.env.RCLONE_RC_PASS||""}`).toString("base64"); const res=await fetch(`${base}/${endpoint}`,{method:"POST",headers,body:JSON.stringify(body),signal:AbortSignal.timeout(15000)}); const data=await res.json().catch(()=>({})); if(!res.ok || data.error) throw new Error(data.error||`rclone RC ${res.status}`); return data; }
+const defaultTimeoutMs = 15_000;
+
+export async function rc<T = any>(
+  endpoint: string,
+  body: Record<string, unknown> = {},
+  timeoutMs = defaultTimeoutMs,
+): Promise<T> {
+  const headers: Record<string, string> = { "content-type": "application/json" };
+  if (process.env.RCLONE_RC_USER) {
+    headers.authorization = "Basic " + Buffer.from(
+      `${process.env.RCLONE_RC_USER}:${process.env.RCLONE_RC_PASS || ""}`,
+    ).toString("base64");
+  }
+
+  let res: Response;
+  try {
+    res = await fetch(`${base}/${endpoint}`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "TimeoutError") {
+      throw new Error(`rclone 请求在 ${Math.ceil(timeoutMs / 1000)} 秒后超时`);
+    }
+    throw error;
+  }
+
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || data.error) throw new Error(data.error || `rclone RC ${res.status}`);
+  return data;
+}
 export function isMissingJobError(error: unknown) {
   const message = error instanceof Error ? error.message : String(error);
   return /(?:job|jobid).*?(?:not found|does not exist|unknown|invalid)|(?:not found|does not exist|unknown|invalid).*?(?:job|jobid)/i.test(message);
