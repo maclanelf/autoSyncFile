@@ -109,6 +109,8 @@ export default function Home() {
   const [detailPage, setDetailPage] = useState(1);
   const [detailSearch, setDetailSearch] = useState("");
   const detailRequestActive = useRef(false);
+  const detailRequestId = useRef(0);
+  const [jobEventVersion, setJobEventVersion] = useState(0);
   const [syncSource, setSyncSource] = useState<SyncLocation>(emptyLocation);
   const [syncDestination, setSyncDestination] =
     useState<SyncLocation>(emptyLocation);
@@ -163,26 +165,29 @@ export default function Home() {
 
   useEffect(() => {
     load();
-    const timer = setInterval(load, 5000);
-    return () => clearInterval(timer);
   }, []);
   useEffect(() => {
-    if (selectedJobId === null) return;
-    loadJobDetails(selectedJobId, detailTab, 1);
-  }, [selectedJobId]);
+    const events = new EventSource("/api/jobs/events");
+    events.onmessage = (event) => {
+      setJobs(JSON.parse(event.data) as SyncJob[]);
+      setJobEventVersion((version) => version + 1);
+    };
+    return () => events.close();
+  }, []);
   useEffect(() => {
+    const requestId = ++detailRequestId.current;
     if (selectedJobId === null || detailTab === "information") return;
     const refresh = () => {
       if (detailRequestActive.current) return;
       detailRequestActive.current = true;
-      void loadJobDetails(selectedJobId, detailTab, detailPage).finally(() => {
-        detailRequestActive.current = false;
-      });
+      void loadJobDetails(selectedJobId, detailTab, detailPage, requestId).finally(
+        () => {
+          detailRequestActive.current = false;
+        },
+      );
     };
     refresh();
-    const timer = window.setInterval(refresh, 5000);
-    return () => window.clearInterval(timer);
-  }, [selectedJobId, detailTab, detailPage, detailSearch]);
+  }, [selectedJobId, detailTab, detailPage, detailSearch, jobEventVersion]);
   useEffect(() => {
     if (view === "storage" && selectedRemote)
       browse(selectedRemote, remotePath);
@@ -394,13 +399,12 @@ export default function Home() {
     setJobPickerOpen(false);
     setDetailPage(1);
     setDetailFiles([]);
-    await loadJobDetails(id, detailTab, 1);
   }
   async function loadJobDetails(
     id: number,
     tab: DetailTab,
     page: number,
-    preferFinished = false,
+    requestId = ++detailRequestId.current,
   ) {
     if (tab === "information") {
       setDetailTab(tab);
@@ -411,14 +415,14 @@ export default function Home() {
       const data = await response.json();
       if (!response.ok) throw new Error(data.error);
       const detailData = data;
+      if (requestId !== detailRequestId.current) return;
       setJobs((current) => current.map((job) => (job.id === id ? detailData : job)));
-      setDetailTab(tab);
       setDetailPage(detailData.page);
       setDetailTotal(detailData.total);
       setDetailCounts(
         detailData.counts || { transferring: 0, queued: 0, finished: 0, failed: 0 },
       );
-    setDetailFiles(detailData.files || []);
+      setDetailFiles(detailData.files || []);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "无法读取任务详情");
     }
@@ -518,13 +522,15 @@ export default function Home() {
                     }}
                     onPickerOpen={setJobPickerOpen}
                     onSelect={selectJob}
-                    onTab={(tab) =>
-                      selectedJobId && loadJobDetails(selectedJobId, tab, 1)
-                    }
-                    onPage={(page) =>
-                      selectedJobId &&
-                      loadJobDetails(selectedJobId, detailTab, page)
-                    }
+                    onTab={(tab) => {
+                      if (tab === detailTab) return;
+                      setDetailPage(1);
+                      setDetailFiles([]);
+                      setDetailTab(tab);
+                    }}
+                    onPage={(page) => {
+                      if (page !== detailPage) setDetailPage(page);
+                    }}
                     onTransfer={openTransfer}
                     onStop={stop}
                     onRetry={retryFiles}

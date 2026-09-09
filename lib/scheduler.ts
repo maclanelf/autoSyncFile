@@ -1,10 +1,10 @@
 import { createJob, getRunningScheduleJob, listSchedules, queueTransferFiles, updateJob, updateSchedule } from "./db";
 import { refreshRunningJobs } from "./job-monitor";
 import { isMissingJobError, listSourceFiles, rc, startTransfer } from "./rclone";
+import { startTaskMonitor } from "./task-monitor";
 import type { SyncSchedule } from "./types";
 
 let timer: ReturnType<typeof setInterval> | undefined;
-let monitorTimer: ReturnType<typeof setInterval> | undefined;
 let starting = false;
 let running = false;
 
@@ -89,7 +89,7 @@ export function startScheduler() {
   if (timer || starting) return;
   starting = true;
   void refreshRunningJobs();
-  monitorTimer ??= setInterval(() => void refreshRunningJobs(), 5000);
+  startTaskMonitor();
   void runDueSchedules();
   const delay = 60000 - (Date.now() % 60000) + 50;
   setTimeout(() => { void runDueSchedules(); timer = setInterval(() => void runDueSchedules(), 60000); starting = false; }, delay);
