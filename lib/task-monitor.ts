@@ -4,6 +4,9 @@ import type { SyncJob } from "./types";
 
 type Listener = (jobs: SyncJob[]) => void;
 
+const ACTIVE_REFRESH_INTERVAL_MS = 500;
+const IDLE_REFRESH_INTERVAL_MS = 15_000;
+
 const listeners = new Set<Listener>();
 let timer: ReturnType<typeof setTimeout> | undefined;
 let refreshing = false;
@@ -32,11 +35,12 @@ async function tick() {
 
 function schedule() {
   if (timer) return;
-  // Check less often while idle so newly created jobs are still discovered.
+  // Poll active rclone transfers twice per second; never schedule another poll
+  // until the current one completes, preventing slow RC calls from overlapping.
   timer = setTimeout(() => {
     timer = undefined;
     void tick();
-  }, hasRunningJobs() ? 2000 : 15000);
+  }, hasRunningJobs() ? ACTIVE_REFRESH_INTERVAL_MS : IDLE_REFRESH_INTERVAL_MS);
 }
 
 export function startTaskMonitor() {
