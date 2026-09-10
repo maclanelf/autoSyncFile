@@ -108,6 +108,7 @@ export default function Home() {
   });
   const [detailPage, setDetailPage] = useState(1);
   const [detailSearch, setDetailSearch] = useState("");
+  const [detailLoading, setDetailLoading] = useState(false);
   const detailRequestActive = useRef(false);
   const detailRequestId = useRef(0);
   const [jobEventVersion, setJobEventVersion] = useState(0);
@@ -128,10 +129,16 @@ export default function Home() {
   const [editingRemote, setEditingRemote] = useState<Remote | null>(null);
   const [remoteToDelete, setRemoteToDelete] = useState<Remote | null>(null);
   const [testingRemote, setTestingRemote] = useState(false);
+  const [savingRemote, setSavingRemote] = useState(false);
+  const [startingTransfer, setStartingTransfer] = useState(false);
+  const [stoppingJobId, setStoppingJobId] = useState<number | null>(null);
+  const [retryingJobId, setRetryingJobId] = useState<number | null>(null);
+  const [deletingRemote, setDeletingRemote] = useState(false);
   const [testedRemoteSignature, setTestedRemoteSignature] = useState("");
   const activeJobs = jobs.filter((job) => job.status === "running");
 
   async function load() {
+    setLoading(true);
     try {
       const [remoteResponse, jobsResponse] = await Promise.all([
         fetch("/api/remotes"),
@@ -175,12 +182,14 @@ export default function Home() {
     return () => events.close();
   }, []);
   useEffect(() => {
-    const requestId = ++detailRequestId.current;
-    if (selectedJobId === null || detailTab === "information") return;
+    if (selectedJobId === null || detailTab === "information") {
+      setDetailLoading(false);
+      return;
+    }
     const refresh = () => {
       if (detailRequestActive.current) return;
       detailRequestActive.current = true;
-      void loadJobDetails(selectedJobId, detailTab, detailPage, requestId).finally(
+      void loadJobDetails(selectedJobId, detailTab, detailPage).finally(
         () => {
           detailRequestActive.current = false;
         },
@@ -243,6 +252,8 @@ export default function Home() {
   async function addRemote(event: React.FormEvent) {
     event.preventDefault();
     if (testedRemoteSignature !== remoteSignature() && !(await testRemote())) return;
+    setSavingRemote(true);
+    try {
     const response = await fetch("/api/remotes", {
       method: editingRemote ? "PATCH" : "POST",
       headers: { "content-type": "application/json" },
@@ -266,6 +277,9 @@ export default function Home() {
       setView("storage");
       load();
     }
+    } finally {
+      setSavingRemote(false);
+    }
   }
   function openAddSource() {
     setEditingRemote(null);
@@ -287,6 +301,8 @@ export default function Home() {
     setSourceDialogOpen(true);
   }
   async function deleteSourceNow(remote: Remote) {
+    setDeletingRemote(true);
+    try {
     const response = await fetch("/api/remotes", {
       method: "DELETE",
       headers: { "content-type": "application/json" },
@@ -297,7 +313,11 @@ export default function Home() {
     if (response.ok) {
       setSelectedRemote(null);
       setEntries([]);
+      setRemoteToDelete(null);
       load();
+    }
+    } finally {
+      setDeletingRemote(false);
     }
   }
   function deleteSource(remote: Remote) {
@@ -345,6 +365,8 @@ export default function Home() {
   }
   async function start(event: React.FormEvent) {
     event.preventDefault();
+    setStartingTransfer(true);
+    try {
     const { scheduled, cron, ...job } = transfer;
     const response = scheduled
       ? await fetch("/api/schedules", {
@@ -373,13 +395,23 @@ export default function Home() {
     );
     if (response.ok) closeTransfer();
     load();
+    } finally {
+      setStartingTransfer(false);
+    }
   }
   async function stop(id: number) {
-    await fetch(`/api/jobs/${id}`, { method: "DELETE" });
-    setMessage("任务已取消");
-    load();
+    setStoppingJobId(id);
+    try {
+      await fetch(`/api/jobs/${id}`, { method: "DELETE" });
+      setMessage("任务已取消");
+      await load();
+    } finally {
+      setStoppingJobId(null);
+    }
   }
   async function retryFiles(jobId: number, fileIds?: number[]) {
+    setRetryingJobId(jobId);
+    try {
     const response = await fetch(`/api/jobs/${jobId}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -393,6 +425,9 @@ export default function Home() {
     );
     if (response.ok) await selectJob(data.id);
     await load();
+    } finally {
+      setRetryingJobId(null);
+    }
   }
   async function selectJob(id: number) {
     setSelectedJobId(id);
@@ -410,6 +445,7 @@ export default function Home() {
       setDetailTab(tab);
       return;
     }
+    setDetailLoading(true);
     try {
       const response = await fetch(`/api/jobs/${id}?state=${tab}&page=${page}&search=${encodeURIComponent(detailSearch)}`);
       const data = await response.json();
@@ -425,6 +461,8 @@ export default function Home() {
       setDetailFiles(detailData.files || []);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "无法读取任务详情");
+    } finally {
+      if (requestId === detailRequestId.current) setDetailLoading(false);
     }
   }
   function openStorage() {
@@ -516,6 +554,9 @@ export default function Home() {
                     detailTotal={detailTotal}
                     detailCounts={detailCounts}
                     detailSearch={detailSearch}
+                    detailLoading={detailLoading}
+                    stoppingJobId={stoppingJobId}
+                    retryingJobId={retryingJobId}
                     onSearch={setJobSearch}
                     onDetailSearch={(search) => {
                       setDetailSearch(search);
@@ -645,12 +686,12 @@ export default function Home() {
               <ActionButton
                 className="test-action"
                 onClick={() => void testRemote()}
-                disabled={testingRemote}
+                disabled={testingRemote || savingRemote}
               >
                 {testingRemote ? "测试中..." : "测试链接"}
               </ActionButton>
-              <ActionButton className="primary-action" type="submit">
-                {editingRemote ? "保存配置" : "写入 rclone 配置"}
+              <ActionButton className="primary-action" type="submit" disabled={savingRemote}>
+                 {savingRemote ? <Spinner size="sm" /> : editingRemote ? "保存配置" : "写入 rclone 配置"}
               </ActionButton>
             </div>
           </form>
@@ -782,13 +823,13 @@ export default function Home() {
               <ActionButton
                 className="primary-action"
                 type="submit"
-                disabled={
+                 disabled={startingTransfer ||
                   !transfer.name.trim() ||
                   !transfer.source ||
                   !transfer.destination
                 }
               >
-                {transfer.scheduled ? "创建定时任务" : "启动同步"}
+                 {startingTransfer ? <Spinner size="sm" /> : transfer.scheduled ? "创建定时任务" : "启动同步"}
               </ActionButton>
             </div>
           </form>
@@ -819,8 +860,8 @@ export default function Home() {
         onCancel={() => setRemoteToDelete(null)}
         onConfirm={() => {
           if (remoteToDelete) void deleteSourceNow(remoteToDelete);
-          setRemoteToDelete(null);
         }}
+        loading={deletingRemote}
       />
     </main>
   );
@@ -1206,6 +1247,11 @@ function SchedulePanel({
 }) {
   const [schedules, setSchedules] = useState<SyncSchedule[]>([]);
   const [results, setResults] = useState<Record<number, SyncJob[]>>({});
+  const [loadingSchedules, setLoadingSchedules] = useState(true);
+  const [loadingResultsId, setLoadingResultsId] = useState<number | null>(null);
+  const [updatingScheduleId, setUpdatingScheduleId] = useState<number | null>(null);
+  const [savingSchedule, setSavingSchedule] = useState(false);
+  const [deletingSchedule, setDeletingSchedule] = useState(false);
   const [runningId, setRunningId] = useState<number | null>(null);
   const [scheduleToDelete, setScheduleToDelete] = useState<SyncSchedule | null>(
     null,
@@ -1224,13 +1270,20 @@ function SchedulePanel({
   const [editDestination, setEditDestination] =
     useState<SyncLocation>(emptyLocation);
   async function loadSchedules() {
-    const response = await fetch("/api/schedules");
-    if (response.ok) setSchedules(await response.json());
+    setLoadingSchedules(true);
+    try {
+      const response = await fetch("/api/schedules");
+      if (response.ok) setSchedules(await response.json());
+    } finally {
+      setLoadingSchedules(false);
+    }
   }
   useEffect(() => {
     void loadSchedules();
   }, []);
   async function setEnabled(schedule: SyncSchedule) {
+    setUpdatingScheduleId(schedule.id);
+    try {
     const response = await fetch("/api/schedules", {
       method: "PATCH",
       headers: { "content-type": "application/json" },
@@ -1239,8 +1292,13 @@ function SchedulePanel({
     const data = await response.json();
     onMessage(response.ok ? "定时任务状态已更新" : data.error);
     if (response.ok) void loadSchedules();
+    } finally {
+      setUpdatingScheduleId(null);
+    }
   }
   async function remove(id: number) {
+    setDeletingSchedule(true);
+    try {
     const response = await fetch("/api/schedules", {
       method: "DELETE",
       headers: { "content-type": "application/json" },
@@ -1248,15 +1306,21 @@ function SchedulePanel({
     });
     const data = await response.json();
     onMessage(response.ok ? "定时任务已删除" : data.error);
-    if (response.ok) void loadSchedules();
+    if (response.ok) {
+      setScheduleToDelete(null);
+      void loadSchedules();
+    }
+    } finally {
+      setDeletingSchedule(false);
+    }
   }
   async function runNow(schedule: SyncSchedule) {
     setRunningId(schedule.id);
+    try {
     const response = await fetch(`/api/schedules/${schedule.id}`, {
       method: "POST",
     });
     const data = await response.json();
-    setRunningId(null);
     onMessage(
       response.ok
         ? data.status === "skipped"
@@ -1271,8 +1335,13 @@ function SchedulePanel({
         [schedule.id]: [data, ...(current[schedule.id] || [])].slice(0, 20),
       }));
     }
+    } finally {
+      setRunningId(null);
+    }
   }
   async function showResults(schedule: SyncSchedule) {
+    setLoadingResultsId(schedule.id);
+    try {
     const response = await fetch(`/api/schedules/${schedule.id}`);
     const data = await response.json();
     if (!response.ok) {
@@ -1280,10 +1349,15 @@ function SchedulePanel({
       return;
     }
     setResults((current) => ({ ...current, [schedule.id]: data.jobs }));
+    } finally {
+      setLoadingResultsId(null);
+    }
   }
   async function saveSchedule(event: React.FormEvent) {
     event.preventDefault();
     if (!editingSchedule) return;
+    setSavingSchedule(true);
+    try {
     const response = await fetch("/api/schedules", {
       method: "PATCH",
       headers: { "content-type": "application/json" },
@@ -1294,6 +1368,9 @@ function SchedulePanel({
     if (response.ok) {
       setEditingSchedule(null);
       void loadSchedules();
+    }
+    } finally {
+      setSavingSchedule(false);
     }
   }
   function splitRemotePath(value: string) {
@@ -1374,7 +1451,9 @@ function SchedulePanel({
           </div>
         </header>
         <div className="schedule-list">
-          {schedules.length === 0 ? (
+          {loadingSchedules ? (
+            <div className="table-loading schedule-loading"><Spinner color="primary" /><span>正在读取定时任务</span></div>
+          ) : schedules.length === 0 ? (
             <span className="schedule-empty">尚未创建定时任务</span>
           ) : (
             schedules.map((schedule) => (
@@ -1409,20 +1488,23 @@ function SchedulePanel({
                   <ActionButton
                     className="detail-action"
                     onClick={() => runNow(schedule)}
+                    disabled={runningId === schedule.id}
                   >
                     {runningId === schedule.id ? "执行中" : "立即执行一次"}
                   </ActionButton>
                   <ActionButton
                     className="detail-action"
                     onClick={() => showResults(schedule)}
+                    disabled={loadingResultsId === schedule.id}
                   >
-                    执行结果
+                    {loadingResultsId === schedule.id ? <Spinner size="sm" /> : "执行结果"}
                   </ActionButton>
                   <ActionButton
                     className="detail-action"
                     onClick={() => setEnabled(schedule)}
+                    disabled={updatingScheduleId === schedule.id}
                   >
-                    {schedule.enabled ? "暂停" : "启用"}
+                    {updatingScheduleId === schedule.id ? <Spinner size="sm" /> : schedule.enabled ? "暂停" : "启用"}
                   </ActionButton>
                   <ActionButton
                     className="danger-action"
@@ -1482,8 +1564,8 @@ function SchedulePanel({
         onCancel={() => setScheduleToDelete(null)}
         onConfirm={() => {
           if (scheduleToDelete) void remove(scheduleToDelete.id);
-          setScheduleToDelete(null);
         }}
+        loading={deletingSchedule}
       />
       <ScheduleEditDialog
         schedule={editingSchedule}
@@ -1495,6 +1577,7 @@ function SchedulePanel({
         onChange={(patch) => setScheduleForm({ ...scheduleForm, ...patch })}
         onCancel={() => setEditingSchedule(null)}
         onSubmit={saveSchedule}
+        saving={savingSchedule}
       />
     </>
   );
@@ -1509,6 +1592,7 @@ function ScheduleEditDialog({
   onChange,
   onCancel,
   onSubmit,
+  saving,
 }: {
   schedule: SyncSchedule | null;
   form: {
@@ -1529,6 +1613,7 @@ function ScheduleEditDialog({
   onChange: (patch: Partial<typeof form>) => void;
   onCancel: () => void;
   onSubmit: (event: React.FormEvent) => void;
+  saving: boolean;
 }) {
   if (!schedule) return null;
   return (
@@ -1607,8 +1692,8 @@ function ScheduleEditDialog({
           <ActionButton className="dialog-cancel" onClick={onCancel}>
             取消
           </ActionButton>
-          <ActionButton className="primary-action" type="submit">
-            保存修改
+          <ActionButton className="primary-action" type="submit" disabled={saving}>
+            {saving ? <Spinner size="sm" /> : "保存修改"}
           </ActionButton>
         </div>
       </form>
@@ -1783,6 +1868,9 @@ function FileManagementView({
   detailTotal,
   detailCounts,
   detailSearch,
+  detailLoading,
+  stoppingJobId,
+  retryingJobId,
   onSearch,
   onDetailSearch,
   onPickerOpen,
@@ -1806,6 +1894,9 @@ function FileManagementView({
   detailTotal: number;
   detailCounts: { transferring: number; queued: number; finished: number; failed: number };
   detailSearch: string;
+  detailLoading: boolean;
+  stoppingJobId: number | null;
+  retryingJobId: number | null;
   onSearch: (value: string) => void;
   onDetailSearch: (value: string) => void;
   onPickerOpen: (open: boolean) => void;
@@ -1953,8 +2044,9 @@ function FileManagementView({
                     iconOnly
                     aria-label="取消任务"
                     onClick={() => onStop(selected.id)}
+                    disabled={stoppingJobId === selected.id}
                   >
-                    <X size={16} />
+                    {stoppingJobId === selected.id ? <Spinner size="sm" /> : <X size={16} />}
                   </ActionButton>
                 )}
               </div>
@@ -2007,8 +2099,9 @@ function FileManagementView({
                       className="retry-all-action"
                       icon={<RefreshCw size={15} />}
                       onClick={() => onRetry(selected.id)}
+                      disabled={retryingJobId === selected.id}
                     >
-                      批量重试
+                      {retryingJobId === selected.id ? <Spinner size="sm" /> : "批量重试"}
                     </ActionButton>
                   )}
                 </div>
@@ -2021,7 +2114,12 @@ function FileManagementView({
                     onChange={(event) => onDetailSearch(event.target.value)}
                   />
                 </div>
-                {detailFiles.length ? (
+                {detailLoading ? (
+                  <div className="file-section-loading">
+                    <Spinner size="sm" color="primary" />
+                    <span>正在查询文件</span>
+                  </div>
+                ) : detailFiles.length ? (
                   <>
                     <FileRows
                       files={detailFiles}
@@ -2590,12 +2688,14 @@ function ConfirmDialog({
   message,
   onCancel,
   onConfirm,
+  loading = false,
 }: {
   open: boolean;
   title: string;
   message: string;
   onCancel: () => void;
   onConfirm: () => void;
+  loading?: boolean;
 }) {
   if (!open) return null;
   return (
@@ -2619,11 +2719,11 @@ function ConfirmDialog({
           <p>{message}</p>
         </div>
         <div className="confirm-dialog-footer">
-          <ActionButton className="dialog-cancel" onClick={onCancel}>
+          <ActionButton className="dialog-cancel" onClick={onCancel} disabled={loading}>
             取消
           </ActionButton>
-          <ActionButton className="danger-confirm" onClick={onConfirm}>
-            确认删除
+          <ActionButton className="danger-confirm" onClick={onConfirm} disabled={loading}>
+            {loading ? <Spinner size="sm" /> : "确认删除"}
           </ActionButton>
         </div>
       </section>
