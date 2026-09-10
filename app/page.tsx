@@ -111,6 +111,7 @@ export default function Home() {
   const [detailLoading, setDetailLoading] = useState(false);
   const detailRequestActive = useRef(false);
   const detailRequestId = useRef(0);
+  const detailLoadedContext = useRef<string | null>(null);
   const [jobEventVersion, setJobEventVersion] = useState(0);
   const [syncSource, setSyncSource] = useState<SyncLocation>(emptyLocation);
   const [syncDestination, setSyncDestination] =
@@ -132,6 +133,7 @@ export default function Home() {
   const [savingRemote, setSavingRemote] = useState(false);
   const [startingTransfer, setStartingTransfer] = useState(false);
   const [stoppingJobId, setStoppingJobId] = useState<number | null>(null);
+  const [jobToStop, setJobToStop] = useState<SyncJob | null>(null);
   const [retryingJobId, setRetryingJobId] = useState<number | null>(null);
   const [deletingRemote, setDeletingRemote] = useState(false);
   const [testedRemoteSignature, setTestedRemoteSignature] = useState("");
@@ -404,6 +406,7 @@ export default function Home() {
     try {
       await fetch(`/api/jobs/${id}`, { method: "DELETE" });
       setMessage("任务已取消");
+      setJobToStop(null);
       await load();
     } finally {
       setStoppingJobId(null);
@@ -445,7 +448,9 @@ export default function Home() {
       setDetailTab(tab);
       return;
     }
-    setDetailLoading(true);
+    const context = `${id}:${tab}:${page}:${detailSearch}`;
+    // Progress events refresh frequently, so keep already displayed file rows visible.
+    setDetailLoading(detailLoadedContext.current !== context);
     try {
       const response = await fetch(`/api/jobs/${id}?state=${tab}&page=${page}&search=${encodeURIComponent(detailSearch)}`);
       const data = await response.json();
@@ -459,6 +464,7 @@ export default function Home() {
         detailData.counts || { transferring: 0, queued: 0, finished: 0, failed: 0 },
       );
       setDetailFiles(detailData.files || []);
+      detailLoadedContext.current = context;
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "无法读取任务详情");
     } finally {
@@ -573,7 +579,7 @@ export default function Home() {
                       if (page !== detailPage) setDetailPage(page);
                     }}
                     onTransfer={openTransfer}
-                    onStop={stop}
+                    onStop={setJobToStop}
                     onRetry={retryFiles}
                     onRefresh={load}
                   />
@@ -691,7 +697,7 @@ export default function Home() {
                 {testingRemote ? "测试中..." : "测试链接"}
               </ActionButton>
               <ActionButton className="primary-action" type="submit" disabled={savingRemote}>
-                 {savingRemote ? <Spinner size="sm" /> : editingRemote ? "保存配置" : "写入 rclone 配置"}
+                 {savingRemote ? <><Spinner size="sm" />保存中...</> : editingRemote ? "保存配置" : "写入 rclone 配置"}
               </ActionButton>
             </div>
           </form>
@@ -829,7 +835,7 @@ export default function Home() {
                   !transfer.destination
                 }
               >
-                 {startingTransfer ? <Spinner size="sm" /> : transfer.scheduled ? "创建定时任务" : "启动同步"}
+                  {startingTransfer ? <><Spinner size="sm" />正在创建...</> : transfer.scheduled ? "创建定时任务" : "启动同步"}
               </ActionButton>
             </div>
           </form>
@@ -862,6 +868,17 @@ export default function Home() {
           if (remoteToDelete) void deleteSourceNow(remoteToDelete);
         }}
         loading={deletingRemote}
+      />
+      <ConfirmDialog
+        open={Boolean(jobToStop)}
+        title="取消进行中的任务"
+        message={jobToStop ? `确定取消任务“${jobToStop.name}”吗？正在传输的文件将停止处理。` : ""}
+        confirmLabel="确认取消"
+        onCancel={() => setJobToStop(null)}
+        onConfirm={() => {
+          if (jobToStop) void stop(jobToStop.id);
+        }}
+        loading={stoppingJobId === jobToStop?.id}
       />
     </main>
   );
@@ -1497,7 +1514,7 @@ function SchedulePanel({
                     onClick={() => showResults(schedule)}
                     disabled={loadingResultsId === schedule.id}
                   >
-                    {loadingResultsId === schedule.id ? <Spinner size="sm" /> : "执行结果"}
+                    {loadingResultsId === schedule.id ? <><Spinner size="sm" />查询中...</> : "执行结果"}
                   </ActionButton>
                   <ActionButton
                     className="detail-action"
@@ -1904,7 +1921,7 @@ function FileManagementView({
   onTab: (tab: DetailTab) => void;
   onPage: (page: number) => void;
   onTransfer: () => void;
-  onStop: (id: number) => void;
+  onStop: (job: SyncJob) => void;
   onRetry: (jobId: number, fileIds?: number[]) => void;
   onRefresh: () => void;
 }) {
@@ -2043,7 +2060,7 @@ function FileManagementView({
                     className="danger-action"
                     iconOnly
                     aria-label="取消任务"
-                    onClick={() => onStop(selected.id)}
+                    onClick={() => onStop(selected)}
                     disabled={stoppingJobId === selected.id}
                   >
                     {stoppingJobId === selected.id ? <Spinner size="sm" /> : <X size={16} />}
@@ -2114,7 +2131,7 @@ function FileManagementView({
                     onChange={(event) => onDetailSearch(event.target.value)}
                   />
                 </div>
-                {detailLoading ? (
+                {detailLoading && detailFiles.length === 0 ? (
                   <div className="file-section-loading">
                     <Spinner size="sm" color="primary" />
                     <span>正在查询文件</span>
@@ -2689,6 +2706,7 @@ function ConfirmDialog({
   onCancel,
   onConfirm,
   loading = false,
+  confirmLabel = "确认删除",
 }: {
   open: boolean;
   title: string;
@@ -2696,6 +2714,7 @@ function ConfirmDialog({
   onCancel: () => void;
   onConfirm: () => void;
   loading?: boolean;
+  confirmLabel?: string;
 }) {
   if (!open) return null;
   return (
@@ -2723,7 +2742,7 @@ function ConfirmDialog({
             取消
           </ActionButton>
           <ActionButton className="danger-confirm" onClick={onConfirm} disabled={loading}>
-            {loading ? <Spinner size="sm" /> : "确认删除"}
+            {loading ? <><Spinner size="sm" />处理中...</> : confirmLabel}
           </ActionButton>
         </div>
       </section>
