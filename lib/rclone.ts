@@ -46,6 +46,16 @@ export async function listSourceFiles(source: string) {
   const result = await rc<{list?: Array<{Path?: string; Name?: string; Size?: number; IsDir?: boolean}>}>("operations/list", {fs, remote, opt: {recurse: true}});
   return (result.list || []).filter((entry) => !entry.IsDir && (entry.Path || entry.Name)).map((entry) => ({path: entry.Path || entry.Name!, size: entry.Size || 0}));
 }
+export async function deleteSourceFiles(source: string, files: Array<{path: string}>) {
+  const separator = source.indexOf(":");
+  if (separator < 0) throw new Error("源路径必须是 rclone 存储路径");
+  const fs = source.slice(0, separator + 1);
+  const root = source.slice(separator + 1).replace(/^\/+|\/+$/g, "");
+  for (const file of files) {
+    const remote = [root, file.path.replace(/^\/+/, "")].filter(Boolean).join("/");
+    await rc("operations/deletefile", {fs, remote});
+  }
+}
 export async function createConfig(name:string, type:string, config:Record<string,string>) {
   const parameters = {...config};
   delete parameters.name;

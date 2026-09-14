@@ -4,7 +4,7 @@ import { listSourceFiles, startTransfer } from "@/lib/rclone";
 import { z } from "zod";
 
 const remotePath = z.string().trim().regex(/^[^:/\\]+:.+/, "请先选择存储和目录");
-const schema = z.object({name: z.string().trim().min(1).max(120), operation: z.enum(["sync", "copy"]), source: remotePath, destination: remotePath});
+const schema = z.object({name: z.string().trim().min(1).max(120), operation: z.enum(["sync", "copy"]), source: remotePath, destination: remotePath, deleteSource: z.boolean().default(false)});
 
 export async function GET() { return NextResponse.json(listJobs()); }
 export async function POST(req: Request) {

@@ -101,6 +101,7 @@ export default function Home() {
     operation: "sync",
     source: "",
     destination: "",
+    deleteSource: false,
     scheduled: false,
     cron: "0 */3 * * *",
     startAt: new Date().toISOString(),
@@ -356,6 +357,7 @@ export default function Home() {
       operation: "sync",
       source: "",
       destination: "",
+      deleteSource: false,
       scheduled: false,
       cron: "0 */3 * * *",
       startAt: new Date().toISOString(),
@@ -796,6 +798,22 @@ export default function Home() {
                   }}
                 />
               </div>
+              <label className="source-field schedule-toggle">
+                <span>同步成功后删除源文件</span>
+                <select
+                  value={transfer.deleteSource ? "true" : "false"}
+                  onChange={(event) =>
+                    setTransfer({
+                      ...transfer,
+                      deleteSource: event.target.value === "true",
+                    })
+                  }
+                >
+                  <option value="false">否</option>
+                  <option value="true">是</option>
+                </select>
+                <small>仅在所有文件同步成功后删除本次同步开始时检测到的源文件。</small>
+              </label>
               <label className="source-field schedule-toggle">
                 <span>执行方式</span>
                 <select
@@ -1293,6 +1311,7 @@ function SchedulePanel({
     operation: "sync" as "sync" | "copy",
     source: "",
     destination: "",
+    deleteSource: false,
     cron: "",
     startAt: "",
   });
@@ -1421,6 +1440,7 @@ function SchedulePanel({
       operation: schedule.operation,
       source: schedule.source,
       destination: schedule.destination,
+      deleteSource: schedule.deleteSource,
       cron: schedule.cron,
       startAt: schedule.startAt,
     });
@@ -1631,6 +1651,7 @@ function ScheduleEditDialog({
     operation: "sync" | "copy";
     source: string;
     destination: string;
+    deleteSource: boolean;
     cron: string;
     startAt: string;
   };
@@ -1709,6 +1730,19 @@ function ScheduleEditDialog({
               }
             />
           </div>
+          <label className="source-field schedule-toggle">
+            <span>同步成功后删除源文件</span>
+            <select
+              value={form.deleteSource ? "true" : "false"}
+              onChange={(event) =>
+                onChange({ deleteSource: event.target.value === "true" })
+              }
+            >
+              <option value="false">否</option>
+              <option value="true">是</option>
+            </select>
+            <small>仅在所有文件同步成功后删除本次同步开始时检测到的源文件。</small>
+          </label>
           <label className="source-field">
             <span>开始时间（第一次运行）</span>
             <input type="datetime-local" value={toDateTimeLocal(form.startAt)} onChange={(event) => onChange({ startAt: new Date(event.target.value).toISOString() })} required />

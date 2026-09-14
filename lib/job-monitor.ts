@@ -1,5 +1,5 @@
-import { completeFullyTransferredFiles, countTransferFiles, finalizeTransferFiles, getJob, listJobs, listStaleTransferringFiles, markTransferFileCompleted, queueTransferFiles, updateJob, upsertTransferFile } from "./db";
-import { isMissingJobError, listSourceFiles, rc } from "./rclone";
+import { completeFullyTransferredFiles, countTransferFiles, finalizeTransferFiles, getJob, listJobs, listSourceTransferFiles, listStaleTransferringFiles, markTransferFileCompleted, queueTransferFiles, updateJob, upsertTransferFile } from "./db";
+import { deleteSourceFiles, isMissingJobError, listSourceFiles, rc } from "./rclone";
 
 type RcloneTransfer = {name?: string; size?: number; bytes?: number; error?: string; startedAt?: string; completedAt?: string};
 
@@ -44,9 +44,20 @@ export async function refreshJob(jobId: number) {
       if (result && Number(result.Size) === file.size) markTransferFileCompleted(file.id, now);
     }
   }
-  const nextStatus = status.finished ? (status.success ? "completed" : "failed") : "running";
-  if (status.finished) finalizeTransferFiles(jobId, status.success ? "completed" : "failed", now);
-  return updateJob(jobId, {status: nextStatus, stats: statsFor(stats), error: status.error, finishedAt: status.finished ? now : undefined});
+  let nextStatus = status.finished ? (status.success ? "completed" : "failed") : "running";
+  let error = status.error;
+  if (status.finished) {
+    finalizeTransferFiles(jobId, status.success ? "completed" : "failed", now);
+    if (status.success && job.deleteSource) {
+      try {
+        await deleteSourceFiles(job.source, listSourceTransferFiles(jobId));
+      } catch (deleteError) {
+        nextStatus = "failed";
+        error = `同步已完成，但删除源文件失败：${deleteError instanceof Error ? deleteError.message : String(deleteError)}`;
+      }
+    }
+  }
+  return updateJob(jobId, {status: nextStatus, stats: statsFor(stats), error, finishedAt: status.finished ? now : undefined});
 }
 
 let monitoring = false;
