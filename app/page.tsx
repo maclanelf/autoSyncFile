@@ -38,6 +38,16 @@ import type {
   SyncSchedule,
   TransferFile,
 } from "@/lib/types";
+import { nextCronRuns } from "@/lib/cron";
+
+function toDateTimeLocal(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+}
+function cronPreview(cron: string, startAt: string) {
+  try { return nextCronRuns(cron, startAt).map((date) => date.toLocaleString()); } catch { return []; }
+}
 
 const sourceTypes = [
   { key: "webdav", label: "WebDAV" },
@@ -93,6 +103,7 @@ export default function Home() {
     destination: "",
     scheduled: false,
     cron: "0 */3 * * *",
+    startAt: new Date().toISOString(),
   });
   const [selectedJobId, setSelectedJobId] = useState<number | null>(null);
   const [jobSearch, setJobSearch] = useState("");
@@ -347,6 +358,7 @@ export default function Home() {
       destination: "",
       scheduled: false,
       cron: "0 */3 * * *",
+      startAt: new Date().toISOString(),
     });
     setSyncSource(emptyLocation);
     setSyncDestination(emptyLocation);
@@ -359,7 +371,7 @@ export default function Home() {
     event.preventDefault();
     setStartingTransfer(true);
     try {
-    const { scheduled, cron, ...job } = transfer;
+    const { scheduled, cron, startAt, ...job } = transfer;
     const response = scheduled
       ? await fetch("/api/schedules", {
           method: "POST",
@@ -370,6 +382,7 @@ export default function Home() {
               (remote) => remote.name === job.source.split(":", 1)[0],
             )?.id,
             cron,
+            startAt,
           }),
         })
       : await fetch("/api/jobs", {
@@ -799,6 +812,11 @@ export default function Home() {
                 </select>
               </label>
               {transfer.scheduled && (
+                <>
+                <label className="source-field">
+                  <span>开始时间（第一次运行）</span>
+                  <input type="datetime-local" value={toDateTimeLocal(transfer.startAt)} onChange={(event) => setTransfer({ ...transfer, startAt: new Date(event.target.value).toISOString() })} required />
+                </label>
                 <label className="source-field">
                   <span>Cron 表达式</span>
                   <input
@@ -812,6 +830,8 @@ export default function Home() {
                   />
                   <small>例如 `0 */3 * * *` 表示每 3 小时执行一次。</small>
                 </label>
+                <div className="source-field-note">未来两次运行时间：{cronPreview(transfer.cron, transfer.startAt).join("、") || "请填写有效的 Cron 表达式"}</div>
+                </>
               )}
             </div>
             <div className="source-dialog-footer">
@@ -1274,6 +1294,7 @@ function SchedulePanel({
     source: "",
     destination: "",
     cron: "",
+    startAt: "",
   });
   const [editSource, setEditSource] = useState<SyncLocation>(emptyLocation);
   const [editDestination, setEditDestination] =
@@ -1401,6 +1422,7 @@ function SchedulePanel({
       source: schedule.source,
       destination: schedule.destination,
       cron: schedule.cron,
+      startAt: schedule.startAt,
     });
     setEditSource({ ...emptyLocation, ...source });
     setEditDestination({ ...emptyLocation, ...destination });
@@ -1610,6 +1632,7 @@ function ScheduleEditDialog({
     source: string;
     destination: string;
     cron: string;
+    startAt: string;
   };
   remotes: Remote[];
   source: SyncLocation;
@@ -1687,6 +1710,10 @@ function ScheduleEditDialog({
             />
           </div>
           <label className="source-field">
+            <span>开始时间（第一次运行）</span>
+            <input type="datetime-local" value={toDateTimeLocal(form.startAt)} onChange={(event) => onChange({ startAt: new Date(event.target.value).toISOString() })} required />
+          </label>
+          <label className="source-field">
             <span>执行时间（Cron）</span>
             <input
               value={form.cron}
@@ -1696,6 +1723,7 @@ function ScheduleEditDialog({
             />
             <small>使用 5 段 Cron 表达式，例如每天 02:30：30 2 * * *</small>
           </label>
+          <div className="source-field-note">未来两次运行时间：{cronPreview(form.cron, form.startAt).join("、") || "请填写有效的 Cron 表达式"}</div>
         </div>
         <div className="source-dialog-footer">
           <ActionButton className="dialog-cancel" onClick={onCancel}>

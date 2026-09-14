@@ -3,6 +3,7 @@ import { refreshRunningJobs } from "./job-monitor";
 import { isMissingJobError, listSourceFiles, rc, startTransfer } from "./rclone";
 import { startTaskMonitor } from "./task-monitor";
 import type { SyncSchedule } from "./types";
+import { cronMatches } from "./cron";
 
 let timer: ReturnType<typeof setInterval> | undefined;
 let starting = false;
@@ -36,11 +37,6 @@ function isValidPart(expression: string, min: number, max: number) {
     const end = endText === undefined ? start : Number(endText);
     return start >= min && end <= max && start <= end;
   });
-}
-
-export function cronMatches(cron: string, date: Date) {
-  const parts = cron.trim().split(/\s+/);
-  return parts.length === 5 && matchesPart(parts[0], date.getMinutes(), 0, 59) && matchesPart(parts[1], date.getHours(), 0, 23) && matchesPart(parts[2], date.getDate(), 1, 31) && matchesPart(parts[3], date.getMonth() + 1, 1, 12) && matchesPart(parts[4], date.getDay(), 0, 6);
 }
 
 export async function runScheduleNow(schedule: SyncSchedule) {
@@ -77,7 +73,7 @@ export async function runDueSchedules(now = new Date()) {
   running = true;
   try {
     const minute = Math.floor(now.getTime() / 60000);
-    const due = listSchedules(true).filter((schedule) => cronMatches(schedule.cron, now) && Math.floor(new Date(schedule.lastRunAt || 0).getTime() / 60000) !== minute);
+    const due = listSchedules(true).filter((schedule) => new Date(schedule.startAt).getTime() <= now.getTime() && cronMatches(schedule.cron, now) && Math.floor(new Date(schedule.lastRunAt || 0).getTime() / 60000) !== minute);
     return await Promise.all(due.map(async (schedule) => {
       try { const result = await runScheduleNow(schedule); return {scheduleId: schedule.id, jobId: "id" in result ? result.id : undefined, skipped: result.status === "skipped"}; }
       catch (error) { return {scheduleId: schedule.id, error: error instanceof Error ? error.message : String(error)}; }
