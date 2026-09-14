@@ -109,7 +109,6 @@ export default function Home() {
   const [detailPage, setDetailPage] = useState(1);
   const [detailSearch, setDetailSearch] = useState("");
   const [detailLoading, setDetailLoading] = useState(false);
-  const detailRequestActive = useRef(false);
   const detailRequestId = useRef(0);
   const detailLoadedContext = useRef<string | null>(null);
   const [jobEventVersion, setJobEventVersion] = useState(0);
@@ -188,16 +187,7 @@ export default function Home() {
       setDetailLoading(false);
       return;
     }
-    const refresh = () => {
-      if (detailRequestActive.current) return;
-      detailRequestActive.current = true;
-      void loadJobDetails(selectedJobId, detailTab, detailPage).finally(
-        () => {
-          detailRequestActive.current = false;
-        },
-      );
-    };
-    refresh();
+    void loadJobDetails(selectedJobId, detailTab, detailPage);
   }, [selectedJobId, detailTab, detailPage, detailSearch, jobEventVersion]);
   useEffect(() => {
     if (view === "storage" && selectedRemote)
@@ -569,12 +559,14 @@ export default function Home() {
                     }}
                     onPickerOpen={setJobPickerOpen}
                     onSelect={selectJob}
-                    onTab={(tab) => {
-                      if (tab === detailTab) return;
-                      setDetailPage(1);
-                      setDetailFiles([]);
-                      setDetailTab(tab);
-                    }}
+                     onTab={(tab) => {
+                       if (tab === detailTab) return;
+                       setDetailPage(1);
+                       setDetailFiles([]);
+                       setDetailLoading(true);
+                       detailLoadedContext.current = null;
+                       setDetailTab(tab);
+                     }}
                     onPage={(page) => {
                       if (page !== detailPage) setDetailPage(page);
                     }}
