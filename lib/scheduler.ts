@@ -73,7 +73,7 @@ export async function runDueSchedules(now = new Date()) {
   running = true;
   try {
     const minute = Math.floor(now.getTime() / 60000);
-    const due = listSchedules(true).filter((schedule) => new Date(schedule.startAt).getTime() <= now.getTime() && cronMatches(schedule.cron, now) && Math.floor(new Date(schedule.lastRunAt || 0).getTime() / 60000) !== minute);
+    const due = listSchedules(true).filter((schedule) => new Date(schedule.startAt).getTime() <= now.getTime() && cronMatches(schedule.cron, now, schedule.startAt) && Math.floor(new Date(schedule.lastRunAt || 0).getTime() / 60000) !== minute);
     return await Promise.all(due.map(async (schedule) => {
       try { const result = await runScheduleNow(schedule); return {scheduleId: schedule.id, jobId: "id" in result ? result.id : undefined, skipped: result.status === "skipped"}; }
       catch (error) { return {scheduleId: schedule.id, error: error instanceof Error ? error.message : String(error)}; }
