@@ -66,6 +66,7 @@ const sourceDefaults: Record<string, Record<string, string>> = {
 const emptyRemote = { name: "", type: "webdav", config: sourceDefaults.webdav };
 const statusColor = {
   running: "warning",
+  deleting_source: "warning",
   completed: "success",
   failed: "danger",
   cancelled: "default",
@@ -148,7 +149,7 @@ export default function Home() {
   const [retryingJobId, setRetryingJobId] = useState<number | null>(null);
   const [deletingRemote, setDeletingRemote] = useState(false);
   const [testedRemoteSignature, setTestedRemoteSignature] = useState("");
-  const activeJobs = jobs.filter((job) => job.status === "running");
+  const activeJobs = jobs.filter((job) => job.status === "running" || job.status === "deleting_source");
 
   async function load() {
     setLoading(true);
@@ -157,10 +158,20 @@ export default function Home() {
         fetch("/api/remotes"),
         fetch("/api/jobs"),
       ]);
-      const remoteData = await remoteResponse.json();
-      const jobData = await jobsResponse.json();
-      const updated = jobData as SyncJob[];
-      setRemotes(remoteData);
+       const remoteData = await remoteResponse.json();
+       const jobData = await jobsResponse.json();
+       if (!remoteResponse.ok) {
+         throw new Error(remoteData.error || "无法读取 rclone 数据源");
+       }
+       if (!jobsResponse.ok) {
+         throw new Error(jobData.error || "无法读取同步任务");
+       }
+       if (!Array.isArray(remoteData) || !Array.isArray(jobData)) {
+         throw new Error("控制台接口返回了无效的数据格式");
+       }
+       const updated = jobData as SyncJob[];
+       const updatedRemotes = remoteData as Remote[];
+       setRemotes(updatedRemotes);
       setJobs(updated);
       setSelectedJobId((current) =>
         current && updated.some((job: SyncJob) => job.id === current)
@@ -171,13 +182,20 @@ export default function Home() {
             )?.id || null,
       );
       setSelectedRemote((current) => {
-        if (!current) return remoteData[0] || null;
-        return remoteData.some((remote: Remote) => remote.name === current.name)
-          ? current
-          : remoteData[0] || null;
-      });
-    } catch {
-      setMessage("无法读取控制台数据，请检查 rclone RC 服务连接。");
+         if (!current) return updatedRemotes[0] || null;
+         return updatedRemotes.some((remote) => remote.name === current.name)
+           ? current
+           : updatedRemotes[0] || null;
+       });
+     } catch (error) {
+       setRemotes([]);
+       setJobs([]);
+       setSelectedRemote(null);
+       setMessage(
+         error instanceof Error
+           ? `无法读取控制台数据：${error.message}`
+           : "无法读取控制台数据，请检查 rclone RC 服务连接。",
+       );
     } finally {
       setLoading(false);
     }
@@ -1022,13 +1040,13 @@ function TasksView({
                   </ActionButton>
                 )}
               </div>
-              {job.status === "running" && (
-                <Progress
+                {(job.status === "running" || job.status === "deleting_source") && (
+                  <Progress
                   className="row-progress"
                   size="sm"
                   isIndeterminate
                   color="warning"
-                  aria-label="同步中"
+                    aria-label={job.status === "deleting_source" ? "正在删除源文件" : "同步中"}
                 />
               )}
             </div>
@@ -1589,7 +1607,9 @@ function SchedulePanel({
                                 ? "失败"
                                 : job.status === "cancelled"
                                   ? "已取消"
-                                  : job.status === "running"
+                              : job.status === "deleting_source"
+                                ? "正在删除源文件"
+                                : job.status === "running"
                                     ? "运行中"
                                     : "未知状态"}
                           </Chip>

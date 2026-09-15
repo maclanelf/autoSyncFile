@@ -13,7 +13,7 @@ let refreshing = false;
 let lastSnapshot = "";
 
 function hasRunningJobs() {
-  return listJobs().some((job) => job.status === "running");
+  return listJobs().some((job) => job.status === "running" || job.status === "deleting_source");
 }
 
 async function tick() {

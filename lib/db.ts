@@ -13,6 +13,44 @@ CREATE TABLE IF NOT EXISTS transfer_files (id INTEGER PRIMARY KEY AUTOINCREMENT,
 CREATE TABLE IF NOT EXISTS schedules (id INTEGER PRIMARY KEY AUTOINCREMENT, remote_id INTEGER NOT NULL, name TEXT NOT NULL DEFAULT '', operation TEXT NOT NULL, source TEXT NOT NULL, destination TEXT NOT NULL, delete_source INTEGER NOT NULL DEFAULT 0, cron TEXT NOT NULL, start_at TEXT NOT NULL DEFAULT '', enabled INTEGER NOT NULL DEFAULT 1, last_run_at TEXT, created_at TEXT NOT NULL DEFAULT '');`);
 for (const statement of ["ALTER TABLE jobs ADD COLUMN name TEXT", "ALTER TABLE jobs ADD COLUMN stats_group TEXT", "ALTER TABLE jobs ADD COLUMN schedule_id INTEGER", "ALTER TABLE jobs ADD COLUMN delete_source INTEGER NOT NULL DEFAULT 0", "ALTER TABLE schedules ADD COLUMN name TEXT NOT NULL DEFAULT ''", "ALTER TABLE schedules ADD COLUMN delete_source INTEGER NOT NULL DEFAULT 0", "ALTER TABLE schedules ADD COLUMN start_at TEXT NOT NULL DEFAULT ''", "ALTER TABLE schedules ADD COLUMN last_run_at TEXT", "ALTER TABLE schedules ADD COLUMN created_at TEXT NOT NULL DEFAULT ''"]) { try { db.exec(statement); } catch {} }
 
+function normalizeStoredPath(path: string, source: string, destination: string) {
+  const raw = path.replace(/\\/g, "/").replace(/^\/+/, "").replace(/^real\//, "");
+  const roots = [source, destination]
+    .map((location) => location.slice(location.indexOf(":") + 1).replace(/^\/+|\/+$/g, ""))
+    .filter(Boolean);
+  return roots.reduce(
+    (current, root) => current === root ? "" : current.startsWith(`${root}/`) ? current.slice(root.length + 1) : current,
+    raw,
+  );
+}
+
+function mergeLegacyTransferFilePaths() {
+  const jobs = db.prepare("SELECT id,source,destination FROM jobs").all() as Array<{id: number; source: string; destination: string}>;
+  const files = db.prepare("SELECT id,job_id jobId,path,status,bytes FROM transfer_files ORDER BY id").all() as Array<{id: number; jobId: number; path: string; status: string; bytes: number}>;
+  const jobsById = new Map(jobs.map((job) => [job.id, job]));
+  const groups = new Map<string, Array<typeof files[number]>>();
+  for (const file of files) {
+    const job = jobsById.get(file.jobId);
+    if (!job) continue;
+    const path = normalizeStoredPath(file.path, job.source, job.destination);
+    const key = `${file.jobId}\0${path}`;
+    groups.set(key, [...(groups.get(key) || []), file]);
+  }
+  const statusPriority: Record<string, number> = {completed: 4, failed: 3, transferring: 2, queued: 1};
+  const transaction = db.transaction(() => {
+    for (const [key, duplicates] of groups) {
+      const path = key.slice(key.indexOf("\0") + 1);
+      const winner = [...duplicates].sort((a, b) => (statusPriority[b.status] || 0) - (statusPriority[a.status] || 0) || b.bytes - a.bytes || a.id - b.id)[0];
+      const aliases = duplicates.filter((file) => file.id !== winner.id).map((file) => file.id);
+      if (aliases.length) db.prepare(`DELETE FROM transfer_files WHERE id IN (${aliases.map(() => "?").join(",")})`).run(...aliases);
+      if (winner.path !== path) db.prepare("UPDATE transfer_files SET path=? WHERE id=?").run(path, winner.id);
+    }
+  });
+  transaction();
+}
+
+mergeLegacyTransferFilePaths();
+
 function mapJob(row: any): SyncJob { return {...row, remoteId: row.remote_id, remoteName: row.remoteName, scheduleId: row.schedule_id || undefined, deleteSource: Boolean(row.delete_source), rcloneJobId: row.rclone_job_id || undefined, statsGroup: row.stats_group || `job-${row.id}`, stats: row.stats ? JSON.parse(row.stats) : undefined, createdAt: row.created_at, finishedAt: row.finished_at}; }
 export function listRemotes(): Remote[] { return db.prepare("SELECT id,name,type,config,created_at createdAt FROM remotes ORDER BY id DESC").all().map((r: any) => ({...r, config: JSON.parse(r.config)})) as Remote[]; }
 export function createRemote(data: Omit<Remote,"id"|"createdAt">) { const now = new Date().toISOString(); const result = db.prepare("INSERT INTO remotes (name,type,config,created_at) VALUES (?,?,?,?)").run(data.name,data.type,JSON.stringify(data.config),now); return {id:Number(result.lastInsertRowid),...data,createdAt:now}; }
@@ -25,6 +63,7 @@ export function createJob(data: {name:string;remoteId?:number;scheduleId?:number
 export function getRunningScheduleJob(scheduleId: number) { const row = db.prepare("SELECT j.*, r.name remoteName FROM jobs j LEFT JOIN remotes r ON r.id=j.remote_id WHERE j.schedule_id=? AND j.status='running' ORDER BY j.id DESC LIMIT 1").get(scheduleId); return row ? mapJob(row) : undefined; }
 export function listScheduleJobs(scheduleId: number) { return db.prepare("SELECT j.*, r.name remoteName FROM jobs j LEFT JOIN remotes r ON r.id=j.remote_id WHERE j.schedule_id=? ORDER BY j.id DESC LIMIT 20").all(scheduleId).map(mapJob); }
 export function updateJob(id:number, patch:{status?:string;stats?:TransferStats;error?:string;finishedAt?:string}) { db.prepare("UPDATE jobs SET status=COALESCE(?,status),stats=COALESCE(?,stats),error=COALESCE(?,error),finished_at=COALESCE(?,finished_at) WHERE id=?").run(patch.status || null,patch.stats ? JSON.stringify(patch.stats) : null,patch.error || null,patch.finishedAt || null,id); return getJob(id); }
+export function removeTransferFileAliases(jobId: number, path: string, aliases: string[]) { const duplicates = [...new Set(aliases.filter((alias) => alias && alias !== path))]; if (!duplicates.length) return; db.prepare(`DELETE FROM transfer_files WHERE job_id=? AND path IN (${duplicates.map(() => "?").join(",")})`).run(jobId, ...duplicates); }
 export function upsertTransferFile(data: Omit<TransferFile,"id">) { db.prepare("INSERT INTO transfer_files (job_id,path,size,bytes,status,error,started_at,finished_at) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(job_id,path) DO UPDATE SET size=excluded.size,bytes=CASE WHEN transfer_files.status IN ('completed','failed') THEN transfer_files.bytes ELSE excluded.bytes END,status=CASE WHEN transfer_files.status IN ('completed','failed') THEN transfer_files.status ELSE excluded.status END,error=CASE WHEN transfer_files.status IN ('completed','failed') THEN transfer_files.error ELSE excluded.error END,finished_at=CASE WHEN transfer_files.status IN ('completed','failed') THEN transfer_files.finished_at ELSE excluded.finished_at END").run(data.jobId,data.path,data.size,data.bytes,data.status,data.error || null,data.startedAt,data.finishedAt || null); }
 export function completeFullyTransferredFiles(jobId: number, finishedAt: string) { db.prepare("UPDATE transfer_files SET status='completed',finished_at=? WHERE job_id=? AND status='transferring' AND size>0 AND bytes>=size").run(finishedAt, jobId); }
 export function listStaleTransferringFiles(jobId: number, before: string, limit = 20) { return db.prepare("SELECT id,job_id jobId,path,size,bytes,status,error,started_at startedAt,finished_at finishedAt FROM transfer_files WHERE job_id=? AND status='transferring' AND started_at<? ORDER BY started_at ASC LIMIT ?").all(jobId, before, limit) as TransferFile[]; }
