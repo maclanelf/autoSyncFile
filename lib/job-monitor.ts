@@ -11,14 +11,27 @@ function remoteRoot(remotePath: string) {
 }
 
 function normalizeTransferPath(path: string, job: NonNullable<ReturnType<typeof getJob>>) {
-  const raw = path.replace(/\\/g, "/").replace(/^\/+/, "");
+  const remotes = [job.source, job.destination]
+    .map((location) => location.slice(0, location.indexOf(":")))
+    .filter(Boolean);
+  let raw = path.replace(/\\/g, "/").replace(/^real\//, "");
+  for (const remote of remotes) {
+    if (raw.startsWith(`${remote}:`)) {
+      raw = raw.slice(remote.length + 1);
+      break;
+    }
+  }
+  raw = raw.replace(/^\/+/, "");
   const withoutReal = raw.replace(/^real\//, "");
   const roots = [remoteRoot(job.source), remoteRoot(job.destination)].filter(Boolean);
   const normalized = roots.reduce(
     (current, root) => current === root ? "" : current.startsWith(`${root}/`) ? current.slice(root.length + 1) : current,
     withoutReal,
   );
-  const aliases = [raw, withoutReal, ...roots.map((root) => `${root}/${normalized}`)];
+  const aliases = [path, raw, withoutReal, ...roots.flatMap((root) => [
+    `${root}/${normalized}`,
+    ...remotes.map((remote) => `${remote}:/${root}/${normalized}`),
+  ])];
   return {path: normalized, aliases: [...new Set(aliases)]};
 }
 

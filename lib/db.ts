@@ -14,10 +14,19 @@ CREATE TABLE IF NOT EXISTS schedules (id INTEGER PRIMARY KEY AUTOINCREMENT, remo
 for (const statement of ["ALTER TABLE jobs ADD COLUMN name TEXT", "ALTER TABLE jobs ADD COLUMN stats_group TEXT", "ALTER TABLE jobs ADD COLUMN schedule_id INTEGER", "ALTER TABLE jobs ADD COLUMN delete_source INTEGER NOT NULL DEFAULT 0", "ALTER TABLE schedules ADD COLUMN name TEXT NOT NULL DEFAULT ''", "ALTER TABLE schedules ADD COLUMN delete_source INTEGER NOT NULL DEFAULT 0", "ALTER TABLE schedules ADD COLUMN start_at TEXT NOT NULL DEFAULT ''", "ALTER TABLE schedules ADD COLUMN last_run_at TEXT", "ALTER TABLE schedules ADD COLUMN created_at TEXT NOT NULL DEFAULT ''"]) { try { db.exec(statement); } catch {} }
 
 function normalizeStoredPath(path: string, source: string, destination: string) {
-  const raw = path.replace(/\\/g, "/").replace(/^\/+/, "").replace(/^real\//, "");
-  const roots = [source, destination]
-    .map((location) => location.slice(location.indexOf(":") + 1).replace(/^\/+|\/+$/g, ""))
-    .filter(Boolean);
+  const locations = [source, destination].map((location) => {
+    const separator = location.indexOf(":");
+    return {remote: location.slice(0, separator), root: location.slice(separator + 1).replace(/^\/+|\/+$/g, "")};
+  });
+  let raw = path.replace(/\\/g, "/").replace(/^real\//, "");
+  for (const {remote} of locations) {
+    if (raw.startsWith(`${remote}:`)) {
+      raw = raw.slice(remote.length + 1);
+      break;
+    }
+  }
+  raw = raw.replace(/^\/+/, "");
+  const roots = locations.map(({root}) => root).filter(Boolean);
   return roots.reduce(
     (current, root) => current === root ? "" : current.startsWith(`${root}/`) ? current.slice(root.length + 1) : current,
     raw,
