@@ -13,7 +13,7 @@ CREATE TABLE IF NOT EXISTS transfer_files (id INTEGER PRIMARY KEY AUTOINCREMENT,
 CREATE TABLE IF NOT EXISTS schedules (id INTEGER PRIMARY KEY AUTOINCREMENT, remote_id INTEGER NOT NULL, name TEXT NOT NULL DEFAULT '', operation TEXT NOT NULL, source TEXT NOT NULL, destination TEXT NOT NULL, delete_source INTEGER NOT NULL DEFAULT 0, cron TEXT NOT NULL, start_at TEXT NOT NULL DEFAULT '', enabled INTEGER NOT NULL DEFAULT 1, last_run_at TEXT, created_at TEXT NOT NULL DEFAULT '');`);
 for (const statement of ["ALTER TABLE jobs ADD COLUMN name TEXT", "ALTER TABLE jobs ADD COLUMN stats_group TEXT", "ALTER TABLE jobs ADD COLUMN schedule_id INTEGER", "ALTER TABLE jobs ADD COLUMN delete_source INTEGER NOT NULL DEFAULT 0", "ALTER TABLE schedules ADD COLUMN name TEXT NOT NULL DEFAULT ''", "ALTER TABLE schedules ADD COLUMN delete_source INTEGER NOT NULL DEFAULT 0", "ALTER TABLE schedules ADD COLUMN start_at TEXT NOT NULL DEFAULT ''", "ALTER TABLE schedules ADD COLUMN last_run_at TEXT", "ALTER TABLE schedules ADD COLUMN created_at TEXT NOT NULL DEFAULT ''"]) { try { db.exec(statement); } catch {} }
 
-function normalizeStoredPath(path: string, source: string, destination: string) {
+export function normalizeTransferPath(path: string, source: string, destination: string) {
   const locations = [source, destination].map((location) => {
     const separator = location.indexOf(":");
     return {remote: location.slice(0, separator), root: location.slice(separator + 1).replace(/^\/+|\/+$/g, "")};
@@ -41,7 +41,7 @@ function mergeLegacyTransferFilePaths() {
   for (const file of files) {
     const job = jobsById.get(file.jobId);
     if (!job) continue;
-    const path = normalizeStoredPath(file.path, job.source, job.destination);
+    const path = normalizeTransferPath(file.path, job.source, job.destination);
     const key = `${file.jobId}\0${path}`;
     groups.set(key, [...(groups.get(key) || []), file]);
   }
@@ -78,7 +78,14 @@ export function completeFullyTransferredFiles(jobId: number, finishedAt: string)
 export function listStaleTransferringFiles(jobId: number, before: string, limit = 20) { return db.prepare("SELECT id,job_id jobId,path,size,bytes,status,error,started_at startedAt,finished_at finishedAt FROM transfer_files WHERE job_id=? AND status='transferring' AND started_at<? ORDER BY started_at ASC LIMIT ?").all(jobId, before, limit) as TransferFile[]; }
 export function markTransferFileCompleted(id: number, finishedAt: string) { db.prepare("UPDATE transfer_files SET status='completed',bytes=CASE WHEN bytes<size THEN size ELSE bytes END,finished_at=COALESCE(finished_at,?) WHERE id=? AND status='transferring'").run(finishedAt, id); }
 export function finalizeTransferFiles(jobId: number, status: "completed" | "failed", finishedAt: string) { db.prepare("UPDATE transfer_files SET status=?,bytes=CASE WHEN ?='completed' AND bytes<size THEN size ELSE bytes END,finished_at=COALESCE(finished_at,?) WHERE job_id=? AND status IN ('queued','transferring')").run(status, status, finishedAt, jobId); }
-export function queueTransferFiles(jobId: number, files: Array<{path: string; size: number}>) { const now = new Date().toISOString(); const insert = db.prepare("INSERT INTO transfer_files (job_id,path,size,bytes,status,started_at) VALUES (?,?,?,?,?,?) ON CONFLICT(job_id,path) DO NOTHING"); const transaction = db.transaction(() => files.forEach((file) => insert.run(jobId, file.path, file.size, 0, "queued", now))); transaction(); }
+export function queueTransferFiles(jobId: number, files: Array<{path: string; size: number}>) {
+  const job = db.prepare("SELECT source,destination FROM jobs WHERE id=?").get(jobId) as {source: string; destination: string} | undefined;
+  if (!job) return;
+  const now = new Date().toISOString();
+  const insert = db.prepare("INSERT INTO transfer_files (job_id,path,size,bytes,status,started_at) VALUES (?,?,?,?,?,?) ON CONFLICT(job_id,path) DO NOTHING");
+  const transaction = db.transaction(() => files.forEach((file) => insert.run(jobId, normalizeTransferPath(file.path, job.source, job.destination), file.size, 0, "queued", now)));
+  transaction();
+}
 export function listSourceTransferFiles(jobId: number) { return db.prepare("SELECT path,size FROM transfer_files WHERE job_id=? ORDER BY id ASC").all(jobId) as Array<{path: string; size: number}>; }
 export function countTransferFiles(jobId: number) { return (db.prepare("SELECT COUNT(*) count FROM transfer_files WHERE job_id=?").get(jobId) as {count: number}).count; }
 export function listTransferFiles(jobId: number, state: "transferring" | "finished" | "failed", page = 1, pageSize = 100, search = "") { const statusWhere = state === "transferring" ? "status IN ('queued','transferring')" : state === "failed" ? "status='failed'" : "status='completed'"; const keyword = `%${search.trim()}%`; const where = `WHERE job_id=? AND ${statusWhere} AND path LIKE ?`; const order = state === "transferring" ? "ORDER BY CASE status WHEN 'transferring' THEN 0 ELSE 1 END, id ASC" : "ORDER BY id ASC"; const total = (db.prepare(`SELECT COUNT(*) count FROM transfer_files ${where}`).get(jobId, keyword) as {count:number}).count; const counts = db.prepare("SELECT SUM(CASE WHEN status='transferring' THEN 1 ELSE 0 END) transferring, SUM(CASE WHEN status='queued' THEN 1 ELSE 0 END) queued, SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END) finished, SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) failed FROM transfer_files WHERE job_id=?").get(jobId) as {transferring:number | null;queued:number | null;finished:number | null;failed:number | null}; const files = db.prepare(`SELECT id,job_id jobId,path,size,CASE WHEN status='completed' AND bytes=0 AND size>0 THEN size ELSE bytes END bytes,status,error,started_at startedAt,finished_at finishedAt FROM transfer_files ${where} ${order} LIMIT ? OFFSET ?`).all(jobId,keyword,pageSize,(page - 1) * pageSize) as TransferFile[]; return {files,total,page,pageSize,counts:{transferring:counts.transferring || 0,queued:counts.queued || 0,finished:counts.finished || 0,failed:counts.failed || 0}}; }
