@@ -1,4 +1,4 @@
-import { completeFullyTransferredFiles, countTransferFiles, finalizeTransferFiles, getJob, listJobs, listSourceTransferFiles, listStaleTransferringFiles, markTransferFileCompleted, queueTransferFiles, removeTransferFileAliases, updateJob, upsertTransferFile } from "./db";
+import { completeFullyTransferredFiles, countTransferFiles, finalizeTransferFiles, getJob, listJobs, listSourceTransferFiles, listStaleTransferringFiles, markTransferFileCompleted, normalizeTransferPath as normalizeStoredTransferPath, queueTransferFiles, removeTransferFileAliases, updateJob, upsertTransferFile } from "./db";
 import { deleteSourceFiles, isMissingJobError, listSourceFiles, rc } from "./rclone";
 
 type RcloneTransfer = {name?: string; size?: number; bytes?: number; error?: string; startedAt?: string; completedAt?: string};
@@ -11,28 +11,9 @@ function remoteRoot(remotePath: string) {
 }
 
 function normalizeTransferPath(path: string, job: NonNullable<ReturnType<typeof getJob>>) {
-  const remotes = [job.source, job.destination]
-    .map((location) => location.slice(0, location.indexOf(":")))
-    .filter(Boolean);
-  let raw = path.replace(/\\/g, "/").replace(/^real\//, "");
-  for (const remote of remotes) {
-    if (raw.startsWith(`${remote}:`)) {
-      raw = raw.slice(remote.length + 1);
-      break;
-    }
-  }
-  raw = raw.replace(/^\/+/, "");
-  const withoutReal = raw.replace(/^real\//, "");
-  const roots = [remoteRoot(job.source), remoteRoot(job.destination)].filter(Boolean);
-  const normalized = roots.reduce(
-    (current, root) => current === root ? "" : current.startsWith(`${root}/`) ? current.slice(root.length + 1) : current,
-    withoutReal,
-  );
-  const aliases = [path, raw, withoutReal, ...roots.flatMap((root) => [
-    `${root}/${normalized}`,
-    ...remotes.map((remote) => `${remote}:/${root}/${normalized}`),
-  ])];
-  return {path: normalized, aliases: [...new Set(aliases)]};
+  const normalized = normalizeStoredTransferPath(path, job.source, job.destination);
+  const aliases = [path, normalized, `${remoteRoot(job.source)}/${normalized}`, `${remoteRoot(job.destination)}/${normalized}`];
+  return {path: normalized, aliases: [...new Set(aliases.filter(Boolean))]};
 }
 
 function recordTransferFile(job: NonNullable<ReturnType<typeof getJob>>, item: RcloneTransfer, data: Omit<Parameters<typeof upsertTransferFile>[0], "jobId" | "path">) {
