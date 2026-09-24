@@ -24,6 +24,8 @@ services:
       - --rc-user=admin
       - --rc-pass=adminadmin
       - --config=/config/rclone/rclone.conf
+      - --rc-job-expire-duration=24h
+      - --rc-job-expire-interval=1m
     volumes:
       - rclone-config:/config/rclone
     restart: always

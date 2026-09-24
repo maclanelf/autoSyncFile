@@ -14,7 +14,7 @@ export async function POST(req: Request) {
     const statsGroup = `sync-${crypto.randomUUID()}`;
     const result = await startTransfer(input.operation, input.source, input.destination, statsGroup);
     const remoteId = ensureRemote(input.source.split(":", 1)[0]).id;
-    const job = createJob({...input, remoteId, statsGroup, rcloneJobId: result.jobid});
+    const job = createJob({...input, remoteId, statsGroup, rcloneJobId: result.jobid, rcloneExecuteId: result.executeId});
     queueTransferFiles(job.id, sourceFiles);
     return NextResponse.json(job, {status: 201});
   } catch (error) { return NextResponse.json({error: error instanceof Error ? error.message : String(error)}, {status: 400}); }

@@ -44,13 +44,16 @@ export async function runScheduleNow(schedule: SyncSchedule) {
   updateSchedule(schedule.id, {lastRunAt: now});
   const previousJob = getRunningScheduleJob(schedule.id);
   if (previousJob) {
+    if (previousJob.status === "deleting_source") {
+      return {status: "skipped" as const, reason: "上一次同步仍在删除源文件，本次定时执行已跳过"};
+    }
     try {
       const status = await rc<{finished?: boolean; success?: boolean; error?: string}>("job/status", {jobid: previousJob.rcloneJobId});
       if (!status.finished) return {status: "skipped" as const, reason: "上一次同步任务尚未完成，本次定时执行已跳过"};
       await refreshJob(previousJob.id);
     } catch (error) {
       if (isMissingJobError(error)) {
-        updateJob(previousJob.id, {status: "failed", error: "rclone 重启后未找到任务，该同步已中断", finishedAt: now});
+        updateJob(previousJob.id, {status: "failed", error: "rclone 任务已不存在，同步状态无法确认，该同步已中断", finishedAt: now});
       } else {
         return {status: "skipped" as const, reason: "无法确认上一次同步任务是否完成，本次定时执行已跳过"};
       }
@@ -59,7 +62,7 @@ export async function runScheduleNow(schedule: SyncSchedule) {
   const sourceFiles = await listSourceFiles(schedule.source);
   const statsGroup = `schedule-${schedule.id}-${crypto.randomUUID()}`;
   const result = await startTransfer(schedule.operation, schedule.source, schedule.destination, statsGroup);
-  const job = createJob({name: `${schedule.name}（定时）`, remoteId: schedule.remoteId, scheduleId: schedule.id, operation: schedule.operation, source: schedule.source, destination: schedule.destination, deleteSource: schedule.deleteSource, statsGroup, rcloneJobId: result.jobid});
+  const job = createJob({name: `${schedule.name}（定时）`, remoteId: schedule.remoteId, scheduleId: schedule.id, operation: schedule.operation, source: schedule.source, destination: schedule.destination, deleteSource: schedule.deleteSource, statsGroup, rcloneJobId: result.jobid, rcloneExecuteId: result.executeId});
   queueTransferFiles(job.id, sourceFiles);
   return job;
 }

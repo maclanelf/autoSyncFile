@@ -55,7 +55,10 @@ function wait(milliseconds: number) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 export async function startTransfer(operation:"sync" | "copy", source:string, destination:string, statsGroup: string, files?: string[]) {
-  return rc<{jobid:number}>(`sync/${operation}`, {srcFs: source, dstFs: destination, _group: statsGroup, _async: true, ...(files?.length ? {_filter: {filesFromRaw: files}} : {})});
+  return rc<{jobid:number; executeId?: string}>(`sync/${operation}`, {srcFs: source, dstFs: destination, _group: statsGroup, _async: true, ...(files?.length ? {_filter: {filesFromRaw: files}} : {})});
+}
+export async function getRcloneExecuteId() {
+  return (await rc<{executeId?: string}>("job/list")).executeId;
 }
 export async function listSourceFiles(source: string) {
   const separator = source.indexOf(":");

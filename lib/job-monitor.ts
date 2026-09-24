@@ -1,5 +1,5 @@
 import { completeFullyTransferredFiles, countTransferFiles, finalizeTransferFiles, getJob, listJobs, listSourceTransferFiles, listStaleTransferringFiles, markTransferFileCompleted, normalizeTransferPath as normalizeStoredTransferPath, queueTransferFiles, removeTransferFileAliases, updateJob, upsertTransferFile } from "./db";
-import { deleteSourceFiles, isMissingJobError, listSourceFiles, rc } from "./rclone";
+import { deleteSourceFiles, getRcloneExecuteId, isMissingJobError, listSourceFiles, rc } from "./rclone";
 
 type RcloneTransfer = {name?: string; size?: number; bytes?: number; error?: string; startedAt?: string; completedAt?: string};
 
@@ -36,7 +36,9 @@ export async function refreshJob(jobId: number) {
     status = await rc<any>("job/status", {jobid: job.rcloneJobId});
   } catch (error) {
     if (!isMissingJobError(error)) throw error;
-    return updateJob(jobId, {status: "failed", error: "rclone 重启后未找到任务，该同步已中断", finishedAt: new Date().toISOString()});
+    const executeId = await getRcloneExecuteId().catch(() => undefined);
+    const restarted = Boolean(executeId && job.rcloneExecuteId && executeId !== job.rcloneExecuteId);
+    return updateJob(jobId, {status: "failed", error: restarted ? "rclone 进程已重启，原同步任务已丢失，该同步已中断" : "rclone 任务已过期或不存在，同步状态无法确认，该同步已中断", finishedAt: new Date().toISOString()});
   }
   const [statsResult, transferredResult] = await Promise.allSettled([
     rc<any>("core/stats", {group: job.statsGroup}),
