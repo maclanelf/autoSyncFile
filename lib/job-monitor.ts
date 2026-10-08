@@ -40,17 +40,8 @@ export async function refreshJob(jobId: number) {
     const restarted = Boolean(executeId && job.rcloneExecuteId && executeId !== job.rcloneExecuteId);
     return updateJob(jobId, {status: "failed", error: restarted ? "rclone 进程已重启，原同步任务已丢失，该同步已中断" : "rclone 任务已过期或不存在，同步状态无法确认，该同步已中断", finishedAt: new Date().toISOString()});
   }
-  const [statsResult, transferredResult] = await Promise.allSettled([
-    rc<any>("core/stats", {group: job.statsGroup}),
-    rc<any>("core/transferred", {group: job.statsGroup}),
-  ]);
-  const stats = statsResult.status === "fulfilled" ? statsResult.value : undefined;
-  const transferred = transferredResult.status === "fulfilled" ? transferredResult.value : undefined;
+  const stats = await rc<any>("core/stats", {group: job.statsGroup}).catch(() => undefined);
   const now = new Date().toISOString();
-  for (const item of (transferred?.transferred || []) as RcloneTransfer[]) {
-    if (!item.name) continue;
-    recordTransferFile(job, item, {size: item.size || 0, bytes: item.error ? (item.bytes || 0) : (item.size || item.bytes || 0), status: item.error ? "failed" : "completed", error: item.error, startedAt: item.startedAt || now, finishedAt: item.completedAt || now});
-  }
   for (const item of (stats?.transferring || []) as RcloneTransfer[]) {
     if (!item.name) continue;
     const size = item.size || 0;

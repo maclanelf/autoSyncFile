@@ -124,7 +124,8 @@ export default function Home() {
   const [detailLoading, setDetailLoading] = useState(false);
   const detailRequestId = useRef(0);
   const detailLoadedContext = useRef<string | null>(null);
-  const [jobEventVersion, setJobEventVersion] = useState(0);
+  const jobRefreshActive = useRef(false);
+  const [jobRefreshVersion, setJobRefreshVersion] = useState(0);
   const [syncSource, setSyncSource] = useState<SyncLocation>(emptyLocation);
   const [syncDestination, setSyncDestination] =
     useState<SyncLocation>(emptyLocation);
@@ -205,12 +206,22 @@ export default function Home() {
     load();
   }, []);
   useEffect(() => {
-    const events = new EventSource("/api/jobs/events");
-    events.onmessage = (event) => {
-      setJobs(JSON.parse(event.data) as SyncJob[]);
-      setJobEventVersion((version) => version + 1);
+    const refreshJobs = async () => {
+      if (jobRefreshActive.current) return;
+      jobRefreshActive.current = true;
+      try {
+        const response = await fetch("/api/jobs");
+        if (!response.ok) return;
+        const updated = await response.json() as SyncJob[];
+        if (!Array.isArray(updated)) return;
+        setJobs(updated);
+        setJobRefreshVersion((version) => version + 1);
+      } finally {
+        jobRefreshActive.current = false;
+      }
     };
-    return () => events.close();
+    const timer = window.setInterval(() => void refreshJobs(), 2_000);
+    return () => window.clearInterval(timer);
   }, []);
   useEffect(() => {
     if (selectedJobId === null || detailTab === "information") {
@@ -221,7 +232,7 @@ export default function Home() {
       void loadJobDetails(selectedJobId, detailTab, detailPage);
     }, 500);
     return () => window.clearTimeout(timer);
-  }, [selectedJobId, detailTab, detailPage, detailSearch, jobEventVersion]);
+  }, [selectedJobId, detailTab, detailPage, detailSearch, jobRefreshVersion]);
   useEffect(() => {
     if (view === "storage" && selectedRemote)
       browse(selectedRemote, remotePath);
