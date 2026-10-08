@@ -7,7 +7,12 @@ type Listener = (jobs: SyncJob[]) => void;
 const ACTIVE_REFRESH_INTERVAL_MS = 500;
 const IDLE_REFRESH_INTERVAL_MS = 15_000;
 
-const listeners = new Set<Listener>();
+type Subscriber = {
+  listener: Listener;
+  canAcceptUpdate: () => boolean;
+};
+
+const subscribers = new Set<Subscriber>();
 let timer: ReturnType<typeof setTimeout> | undefined;
 let refreshing = false;
 let lastSnapshot = "";
@@ -25,7 +30,11 @@ async function tick() {
     const snapshot = JSON.stringify(jobs);
     if (snapshot !== lastSnapshot) {
       lastSnapshot = snapshot;
-      for (const listener of listeners) listener(jobs);
+      for (const subscriber of subscribers) {
+        // Skip stale updates for slow SSE clients instead of retaining them in
+        // the stream queue until the Node heap is exhausted.
+        if (subscriber.canAcceptUpdate()) subscriber.listener(jobs);
+      }
     }
   } finally {
     refreshing = false;
@@ -50,9 +59,10 @@ export function startTaskMonitor() {
   schedule();
 }
 
-export function subscribeToTaskUpdates(listener: Listener) {
-  listeners.add(listener);
-  listener(listJobs());
+export function subscribeToTaskUpdates(listener: Listener, canAcceptUpdate = () => true) {
+  const subscriber = {listener, canAcceptUpdate};
+  subscribers.add(subscriber);
+  if (canAcceptUpdate()) listener(listJobs());
   startTaskMonitor();
-  return () => listeners.delete(listener);
+  return () => subscribers.delete(subscriber);
 }

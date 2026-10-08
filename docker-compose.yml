@@ -6,9 +6,12 @@ services:
       - "9223:9223"
     environment:
       DATABASE_PATH: /app/data/rclone.sqlite
+      # Keep V8 below the container limit so native allocations retain headroom.
+      NODE_OPTIONS: --max-old-space-size=1024
       RCLONE_RC_URL: http://rclone:5572
       RCLONE_RC_USER: admin
       RCLONE_RC_PASS: adminadmin
+    mem_limit: 1536m
     volumes:
       - app-data:/app/data
     depends_on:

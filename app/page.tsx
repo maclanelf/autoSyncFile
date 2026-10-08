@@ -217,7 +217,10 @@ export default function Home() {
       setDetailLoading(false);
       return;
     }
-    void loadJobDetails(selectedJobId, detailTab, detailPage);
+    const timer = window.setTimeout(() => {
+      void loadJobDetails(selectedJobId, detailTab, detailPage);
+    }, 500);
+    return () => window.clearTimeout(timer);
   }, [selectedJobId, detailTab, detailPage, detailSearch, jobEventVersion]);
   useEffect(() => {
     if (view === "storage" && selectedRemote)

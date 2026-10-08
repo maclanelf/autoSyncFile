@@ -6,23 +6,38 @@ export async function GET(request: Request) {
   const encoder = new TextEncoder();
   let closed = false;
   let unsubscribe: (() => void) | undefined;
+  let controller: ReadableStreamDefaultController<Uint8Array> | undefined;
 
-  const stream = new ReadableStream({
-    start(controller) {
-      unsubscribe = subscribeToTaskUpdates((jobs) => {
-        if (!closed) controller.enqueue(encoder.encode(`data: ${JSON.stringify(jobs)}\n\n`));
-      });
-    },
-    cancel() {
-      closed = true;
-      unsubscribe?.();
-    },
-  });
-
-  request.signal.addEventListener("abort", () => {
+  function cleanup() {
+    if (closed) return;
     closed = true;
     unsubscribe?.();
+  }
+
+  function close() {
+    cleanup();
+    try {
+      controller?.close();
+    } catch {
+      // The stream can already be cancelled when the request aborts.
+    }
+  }
+
+  const stream = new ReadableStream({
+    start(streamController) {
+      controller = streamController;
+      unsubscribe = subscribeToTaskUpdates((jobs) => {
+        if (!closed && streamController.desiredSize !== null && streamController.desiredSize > 0) {
+          streamController.enqueue(encoder.encode(`data: ${JSON.stringify(jobs)}\n\n`));
+        }
+      }, () => !closed && streamController.desiredSize !== null && streamController.desiredSize > 0);
+    },
+    cancel() {
+      cleanup();
+    },
   });
+
+  request.signal.addEventListener("abort", close, {once: true});
 
   return new Response(stream, {
     headers: {
