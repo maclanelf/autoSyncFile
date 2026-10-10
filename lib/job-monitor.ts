@@ -1,5 +1,5 @@
-import { completeFullyTransferredFiles, finalizeTransferFiles, getJob, listRunningJobs, listSourceTransferFiles, listStaleTransferringFiles, markTransferFileCompleted, normalizeTransferPath as normalizeStoredTransferPath, removeTransferFileAliases, updateJob, upsertTransferFile } from "./db";
-import { deleteSourceFiles, getRcloneExecuteId, isMissingJobError, rc } from "./rclone";
+import { completeFullyTransferredFiles, finalizeTransferFiles, getJob, listRunningJobs, listSourceTransferFiles, listStaleTransferringFiles, markTransferFileCompleted, needsTransferManifest, normalizeTransferPath as normalizeStoredTransferPath, queueTransferFiles, removeTransferFileAliases, updateJob, upsertTransferFile } from "./db";
+import { deleteSourceFiles, getRcloneExecuteId, isMissingJobError, listSourceFiles, rc } from "./rclone";
 
 type RcloneTransfer = {name?: string; size?: number; bytes?: number; error?: string; startedAt?: string; completedAt?: string};
 
@@ -40,6 +40,10 @@ export async function refreshJob(jobId: number) {
     return updateJob(jobId, {status: "failed", error: restarted ? "rclone 进程已重启，原同步任务已丢失，该同步已中断" : "rclone 任务已过期或不存在，同步状态无法确认，该同步已中断", finishedAt: new Date().toISOString()});
   }
   const stats = await rc<any>("core/stats", {group: job.statsGroup}).catch(() => undefined);
+  // Older active jobs did not receive manifests, leaving the queued tab empty.
+  if (needsTransferManifest(jobId)) {
+    queueTransferFiles(jobId, await listSourceFiles(job.source));
+  }
   const now = new Date().toISOString();
   for (const item of (stats?.transferring || []) as RcloneTransfer[]) {
     if (!item.name) continue;
