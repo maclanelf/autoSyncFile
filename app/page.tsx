@@ -85,7 +85,7 @@ type SyncLocation = {
   entries: RemoteEntry[];
   loading: boolean;
 };
-type DetailTab = "queued" | "transferring" | "finished" | "failed" | "information";
+type DetailTab = "transferring" | "finished" | "failed" | "information";
 const emptyLocation: SyncLocation = {
   remoteName: "",
   path: "",
@@ -110,7 +110,7 @@ export default function Home() {
   const [selectedJobId, setSelectedJobId] = useState<number | null>(null);
   const [jobSearch, setJobSearch] = useState("");
   const [isJobPickerOpen, setJobPickerOpen] = useState(false);
-  const [detailTab, setDetailTab] = useState<DetailTab>("queued");
+  const [detailTab, setDetailTab] = useState<DetailTab>("transferring");
   const [detailFiles, setDetailFiles] = useState<TransferFile[]>([]);
   const [detailTotal, setDetailTotal] = useState(0);
   const [detailCounts, setDetailCounts] = useState({
@@ -2154,12 +2154,6 @@ function FileManagementView({
             </header>
             <nav className="detail-tabs">
               <button
-                className={detailTab === "queued" ? "active" : ""}
-                onClick={() => onTab("queued")}
-              >
-                等待中 <b>{selected.stats?.totalTransfers || 0}</b>
-              </button>
-              <button
                 className={detailTab === "transferring" ? "active" : ""}
                 onClick={() => onTab("transferring")}
               >
@@ -2192,8 +2186,6 @@ function FileManagementView({
                   <strong>
                     {detailTab === "transferring"
                       ? "进行中"
-                      : detailTab === "queued"
-                        ? "等待中"
                       : detailTab === "failed"
                         ? "失败文件"
                         : "已完成"}
@@ -2214,7 +2206,6 @@ function FileManagementView({
                     </ActionButton>
                   )}
                 </div>
-                {detailTab !== "queued" && (
                 <div className="file-search-control">
                   <Search size={16} />
                   <input
@@ -2224,13 +2215,7 @@ function FileManagementView({
                     onChange={(event) => onDetailSearch(event.target.value)}
                   />
                 </div>
-                )}
-                {detailTab === "queued" ? (
-                  <div className="file-section-empty">
-                    等待数量取自 rclone 文件进度的总数。为避免 SMB 大目录递归扫描，
-                    此处不再生成或列出完整等待文件清单。
-                  </div>
-                ) : detailLoading && detailFiles.length === 0 ? (
+                {detailLoading && detailFiles.length === 0 ? (
                   <div className="file-section-loading">
                     <Spinner size="sm" color="primary" />
                     <span>正在查询文件</span>

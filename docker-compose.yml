@@ -21,14 +21,27 @@ services:
 
   rclone:
     image: rclone/rclone:latest
+    environment:
+      # Keep Go's heap below the container limit during long-running SMB jobs.
+      GOGC: "50"
+      GOMEMLIMIT: 640MiB
     command:
       - rcd
       - --rc-addr=:5572
       - --rc-user=admin
       - --rc-pass=adminadmin
       - --config=/config/rclone/rclone.conf
-      - --rc-job-expire-duration=15m
-      - --rc-job-expire-interval=1m
+      # Completed RC jobs retain their status and can accumulate over time.
+      - --rc-job-expire-duration=1m
+      - --rc-job-expire-interval=30s
+      # Bound memory used by large directory syncs and per-transfer buffers.
+      - --transfers=2
+      - --checkers=4
+      - --max-backlog=2000
+      - --buffer-size=4M
+      - --max-buffer-memory=64M
+      # Spill large directory listings to disk earlier instead of retaining them.
+      - --list-cutoff=10000
     volumes:
       - rclone-config:/config/rclone
     mem_limit: 768m
