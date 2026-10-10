@@ -481,10 +481,6 @@ export default function Home() {
     page: number,
     requestId = ++detailRequestId.current,
   ) {
-    if (tab === "information") {
-      setDetailTab(tab);
-      return;
-    }
     const context = `${id}:${tab}:${page}:${detailSearch}`;
     // Progress events refresh frequently, so keep already displayed file rows visible.
     setDetailLoading(detailLoadedContext.current !== context);
@@ -2161,7 +2157,7 @@ function FileManagementView({
                 className={detailTab === "queued" ? "active" : ""}
                 onClick={() => onTab("queued")}
               >
-                等待中 <b>{detailCounts.queued}</b>
+                等待中 <b>{selected.stats?.totalTransfers || 0}</b>
               </button>
               <button
                 className={detailTab === "transferring" ? "active" : ""}
@@ -2218,6 +2214,7 @@ function FileManagementView({
                     </ActionButton>
                   )}
                 </div>
+                {detailTab !== "queued" && (
                 <div className="file-search-control">
                   <Search size={16} />
                   <input
@@ -2227,7 +2224,13 @@ function FileManagementView({
                     onChange={(event) => onDetailSearch(event.target.value)}
                   />
                 </div>
-                {detailLoading && detailFiles.length === 0 ? (
+                )}
+                {detailTab === "queued" ? (
+                  <div className="file-section-empty">
+                    等待数量取自 rclone 文件进度的总数。为避免 SMB 大目录递归扫描，
+                    此处不再生成或列出完整等待文件清单。
+                  </div>
+                ) : detailLoading && detailFiles.length === 0 ? (
                   <div className="file-section-loading">
                     <Spinner size="sm" color="primary" />
                     <span>正在查询文件</span>
@@ -2265,9 +2268,7 @@ function FileManagementView({
                   </>
                 ) : (
                   <div className="file-section-empty">
-                    {detailTab === "queued"
-                      ? "当前没有等待传输的文件。"
-                      : detailTab === "transferring"
+                    {detailTab === "transferring"
                         ? "当前没有正在传输的文件。"
                       : detailTab === "failed"
                         ? "当前没有失败文件。"

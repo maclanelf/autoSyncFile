@@ -10,9 +10,9 @@ export async function GET() { return NextResponse.json(listJobs()); }
 export async function POST(req: Request) {
   try {
     const input = schema.parse(await req.json());
-    // The detail view reads queued files from this manifest. Build it before the
-    // async rclone job starts so users can see the complete pending queue.
-    const sourceFiles = await listSourceFiles(input.source);
+    // Only deletion jobs need a recursive manifest to safely remove source files
+    // after a successful transfer. Other jobs use rclone progress totals.
+    const sourceFiles = input.deleteSource ? await listSourceFiles(input.source) : [];
     const statsGroup = `sync-${crypto.randomUUID()}`;
     const result = await startTransfer(input.operation, input.source, input.destination, statsGroup);
     const remoteId = ensureRemote(input.source.split(":", 1)[0]).id;

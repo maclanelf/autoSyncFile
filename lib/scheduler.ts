@@ -59,9 +59,9 @@ export async function runScheduleNow(schedule: SyncSchedule) {
       }
     }
   }
-  // The detail view reads queued files from this manifest, including normal
-  // scheduled transfers that do not delete their source files.
-  const sourceFiles = await listSourceFiles(schedule.source);
+  // Only deletion jobs need a recursive manifest to safely remove source files
+  // after a successful scheduled transfer.
+  const sourceFiles = schedule.deleteSource ? await listSourceFiles(schedule.source) : [];
   const statsGroup = `schedule-${schedule.id}-${crypto.randomUUID()}`;
   const result = await startTransfer(schedule.operation, schedule.source, schedule.destination, statsGroup);
   const job = createJob({name: `${schedule.name}（定时）`, remoteId: schedule.remoteId, scheduleId: schedule.id, operation: schedule.operation, source: schedule.source, destination: schedule.destination, deleteSource: schedule.deleteSource, statsGroup, rcloneJobId: result.jobid, rcloneExecuteId: result.executeId});
