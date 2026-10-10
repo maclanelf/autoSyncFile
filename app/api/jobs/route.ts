@@ -10,7 +10,9 @@ export async function GET() { return NextResponse.json(listJobs()); }
 export async function POST(req: Request) {
   try {
     const input = schema.parse(await req.json());
-    const sourceFiles = await listSourceFiles(input.source);
+    // Recursive rclone listings are unbounded. Only create a file manifest when
+    // it is required later to safely delete the transferred source files.
+    const sourceFiles = input.deleteSource ? await listSourceFiles(input.source) : [];
     const statsGroup = `sync-${crypto.randomUUID()}`;
     const result = await startTransfer(input.operation, input.source, input.destination, statsGroup);
     const remoteId = ensureRemote(input.source.split(":", 1)[0]).id;

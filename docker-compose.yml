@@ -6,8 +6,8 @@ services:
       - "9223:9223"
     environment:
       DATABASE_PATH: /app/data/rclone.sqlite
-      # Keep V8 below the container limit so native allocations retain headroom.
-      NODE_OPTIONS: --max-old-space-size=1024
+      # Reserve headroom for SQLite, fetch buffers, and native Node allocations.
+      NODE_OPTIONS: --max-old-space-size=768
       RCLONE_RC_URL: http://rclone:5572
       RCLONE_RC_USER: admin
       RCLONE_RC_PASS: adminadmin
@@ -27,10 +27,11 @@ services:
       - --rc-user=admin
       - --rc-pass=adminadmin
       - --config=/config/rclone/rclone.conf
-      - --rc-job-expire-duration=24h
+      - --rc-job-expire-duration=15m
       - --rc-job-expire-interval=1m
     volumes:
       - rclone-config:/config/rclone
+    mem_limit: 768m
     restart: always
 
 volumes:

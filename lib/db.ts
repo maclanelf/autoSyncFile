@@ -33,40 +33,14 @@ export function normalizeTransferPath(path: string, source: string, destination:
   );
 }
 
-function mergeLegacyTransferFilePaths() {
-  const jobs = db.prepare("SELECT id,source,destination FROM jobs").all() as Array<{id: number; source: string; destination: string}>;
-  const files = db.prepare("SELECT id,job_id jobId,path,status,bytes FROM transfer_files ORDER BY id").all() as Array<{id: number; jobId: number; path: string; status: string; bytes: number}>;
-  const jobsById = new Map(jobs.map((job) => [job.id, job]));
-  const groups = new Map<string, Array<typeof files[number]>>();
-  for (const file of files) {
-    const job = jobsById.get(file.jobId);
-    if (!job) continue;
-    const path = normalizeTransferPath(file.path, job.source, job.destination);
-    const key = `${file.jobId}\0${path}`;
-    groups.set(key, [...(groups.get(key) || []), file]);
-  }
-  const statusPriority: Record<string, number> = {completed: 4, failed: 3, transferring: 2, queued: 1};
-  const transaction = db.transaction(() => {
-    for (const [key, duplicates] of groups) {
-      const path = key.slice(key.indexOf("\0") + 1);
-      const winner = [...duplicates].sort((a, b) => (statusPriority[b.status] || 0) - (statusPriority[a.status] || 0) || b.bytes - a.bytes || a.id - b.id)[0];
-      const aliases = duplicates.filter((file) => file.id !== winner.id).map((file) => file.id);
-      if (aliases.length) db.prepare(`DELETE FROM transfer_files WHERE id IN (${aliases.map(() => "?").join(",")})`).run(...aliases);
-      if (winner.path !== path) db.prepare("UPDATE transfer_files SET path=? WHERE id=?").run(path, winner.id);
-    }
-  });
-  transaction();
-}
-
-mergeLegacyTransferFilePaths();
-
 function mapJob(row: any): SyncJob { return {...row, remoteId: row.remote_id, remoteName: row.remoteName, scheduleId: row.schedule_id || undefined, deleteSource: Boolean(row.delete_source), rcloneJobId: row.rclone_job_id || undefined, rcloneExecuteId: row.rclone_execute_id || undefined, statsGroup: row.stats_group || `job-${row.id}`, stats: row.stats ? JSON.parse(row.stats) : undefined, createdAt: row.created_at, finishedAt: row.finished_at}; }
 export function listRemotes(): Remote[] { return db.prepare("SELECT id,name,type,config,created_at createdAt FROM remotes ORDER BY id DESC").all().map((r: any) => ({...r, config: JSON.parse(r.config)})) as Remote[]; }
 export function createRemote(data: Omit<Remote,"id"|"createdAt">) { const now = new Date().toISOString(); const result = db.prepare("INSERT INTO remotes (name,type,config,created_at) VALUES (?,?,?,?)").run(data.name,data.type,JSON.stringify(data.config),now); return {id:Number(result.lastInsertRowid),...data,createdAt:now}; }
 export function ensureRemote(name: string, type = "unknown") { const existing = db.prepare("SELECT id,name,type,config,created_at createdAt FROM remotes WHERE name=?").get(name) as any; return existing ? {...existing,config:JSON.parse(existing.config)} as Remote : createRemote({name,type,config:{}}); }
 export function updateRemote(id: number, data: Pick<Remote, "type" | "config">) { db.prepare("UPDATE remotes SET type=?,config=? WHERE id=?").run(data.type, JSON.stringify(data.config), id); return getRemote(id); }
 export function getRemote(id:number): Remote | undefined { const r:any=db.prepare("SELECT id,name,type,config,created_at createdAt FROM remotes WHERE id=?").get(id); return r&&({...r,config:JSON.parse(r.config)}); }
-export function listJobs(): SyncJob[] { return db.prepare("SELECT j.*, r.name remoteName FROM jobs j LEFT JOIN remotes r ON r.id=j.remote_id ORDER BY j.id DESC").all().map(mapJob); }
+export function listJobs(limit = 100): SyncJob[] { return db.prepare("SELECT j.*, r.name remoteName FROM jobs j LEFT JOIN remotes r ON r.id=j.remote_id ORDER BY CASE WHEN j.status IN ('running','deleting_source') THEN 0 ELSE 1 END, j.id DESC LIMIT ?").all(limit).map(mapJob); }
+export function listRunningJobs(): SyncJob[] { return db.prepare("SELECT j.*, r.name remoteName FROM jobs j LEFT JOIN remotes r ON r.id=j.remote_id WHERE j.status IN ('running','deleting_source') ORDER BY j.id DESC").all().map(mapJob); }
 export function getJob(id: number): SyncJob | undefined { const row = db.prepare("SELECT j.*, r.name remoteName FROM jobs j LEFT JOIN remotes r ON r.id=j.remote_id WHERE j.id=?").get(id); return row ? mapJob(row) : undefined; }
 export function createJob(data: {name:string;remoteId?:number;scheduleId?:number;operation:"sync"|"copy";source:string;destination:string;deleteSource?:boolean;statsGroup:string;rcloneJobId?:number;rcloneExecuteId?:string}) { const now=new Date().toISOString(); const result=db.prepare("INSERT INTO jobs (remote_id,schedule_id,name,operation,source,destination,delete_source,status,rclone_job_id,rclone_execute_id,stats_group,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)").run(data.remoteId || null,data.scheduleId || null,data.name,data.operation,data.source,data.destination,Number(Boolean(data.deleteSource)),"running",data.rcloneJobId || null,data.rcloneExecuteId || null,data.statsGroup,now); return getJob(Number(result.lastInsertRowid))!; }
 export function getRunningScheduleJob(scheduleId: number) { const row = db.prepare("SELECT j.*, r.name remoteName FROM jobs j LEFT JOIN remotes r ON r.id=j.remote_id WHERE j.schedule_id=? AND j.status IN ('running','deleting_source') ORDER BY j.id DESC LIMIT 1").get(scheduleId); return row ? mapJob(row) : undefined; }

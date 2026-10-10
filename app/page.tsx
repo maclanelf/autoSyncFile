@@ -220,7 +220,7 @@ export default function Home() {
         jobRefreshActive.current = false;
       }
     };
-    const timer = window.setInterval(() => void refreshJobs(), 2_000);
+    const timer = window.setInterval(() => void refreshJobs(), 10_000);
     return () => window.clearInterval(timer);
   }, []);
   useEffect(() => {

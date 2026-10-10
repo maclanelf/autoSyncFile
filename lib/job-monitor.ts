@@ -1,5 +1,5 @@
-import { completeFullyTransferredFiles, countTransferFiles, finalizeTransferFiles, getJob, listJobs, listSourceTransferFiles, listStaleTransferringFiles, markTransferFileCompleted, normalizeTransferPath as normalizeStoredTransferPath, queueTransferFiles, removeTransferFileAliases, updateJob, upsertTransferFile } from "./db";
-import { deleteSourceFiles, getRcloneExecuteId, isMissingJobError, listSourceFiles, rc } from "./rclone";
+import { completeFullyTransferredFiles, finalizeTransferFiles, getJob, listRunningJobs, listSourceTransferFiles, listStaleTransferringFiles, markTransferFileCompleted, normalizeTransferPath as normalizeStoredTransferPath, removeTransferFileAliases, updateJob, upsertTransferFile } from "./db";
+import { deleteSourceFiles, getRcloneExecuteId, isMissingJobError, rc } from "./rclone";
 
 type RcloneTransfer = {name?: string; size?: number; bytes?: number; error?: string; startedAt?: string; completedAt?: string};
 
@@ -28,7 +28,6 @@ export async function refreshJob(jobId: number) {
   if (!job) throw new Error("未找到任务记录");
   if (job.status === "deleting_source") return finishSourceDeletion(job);
   if (job.status !== "running" || !job.rcloneJobId) return job;
-  if (countTransferFiles(jobId) <= 4) queueTransferFiles(jobId, await listSourceFiles(job.source));
   let status: any;
   try {
     // The job status is authoritative. Statistics endpoints can briefly fail or
@@ -90,7 +89,7 @@ export async function refreshRunningJobs() {
   if (monitoring) return;
   monitoring = true;
   try {
-    await Promise.allSettled(listJobs().filter((job) => job.status === "running" || job.status === "deleting_source").map((job) => refreshJob(job.id)));
+    await Promise.allSettled(listRunningJobs().map((job) => refreshJob(job.id)));
   } finally {
     monitoring = false;
   }
